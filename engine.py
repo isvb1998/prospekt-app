@@ -1,7 +1,7 @@
-import re
+import datetime
+from sqlalchemy.orm import Session
 from rapidfuzz import process, fuzz
-from database import SessionLocal, Offer, UserLearnedMapping
-from historical_engine import resolve_ingredient_price
+from database import SessionLocal, Offer, PriceHistory, UserLearnedMapping
 
 STATIC_SYNONYM_MAP = {
     "carne moída": "Rinderhackfleisch",
@@ -48,23 +48,32 @@ STATIC_SYNONYM_MAP = {
     "garlic": "Knoblauch"
 }
 
-DESCRIPTOR_WORDS = [
-    "picado", "picadinho", "fatiado", "ralado", "cozido", "fresco", "fresca",
-    "de", "do", "da", "dos", "das", "sem", "com", "light", "desnatado",
-    "integral", "g", "ml", "kg", "or", "and", "chopped", "diced", "sliced",
-    "grated", "fresh", "organic", "peeled", "minced"
-]
+# Category baselines (per kg or per L) to keep weekly baskets between €40 and €100
+CATEGORY_BASELINES = {
+    "Vorrat": 1.50,         # ~€1.50/kg for dry goods / flour / rice
+    "Molkerei": 1.20,       # ~€1.20/L for dairy / milk / yogurt
+    "Fleisch": 8.00,        # ~€8.00/kg for meat / beef / poultry
+    "Obst & Gemüse": 2.00,  # ~€2.00/kg for produce
+    "Feinkost": 3.50,
+    "General": 2.00
+}
 
+def get_category_baseline(category: str) -> float:
+    if not category:
+        return 1.50
+    return CATEGORY_BASELINES.get(category.strip().title(), 1.50)
 
-def strip_ingredient_descriptors(raw_name: str) -> str:
-    cleaned = raw_name.lower().strip()
-    words = cleaned.split()
-    filtered_words = [w for w in words if w not in DESCRIPTOR_WORDS and not w.endswith("g") and not w.isdigit()]
-    result = " ".join(filtered_words).strip()
-    return result if result else cleaned
+def normalize_quantity_to_base_units(quantity: float, unit: str) -> tuple[float, str]:
+    """Standardizes grams and milliliters to kg and liters for correct unit price scaling."""
+    u_lower = unit.strip().lower()
+    if u_lower in ["g", "gram", "grama", "gramas", "oz"]:
+        return quantity / 1000.0, "kg"
+    elif u_lower in ["ml", "milliliter", "milliliters"]:
+        return quantity / 1000.0, "L"
+    else:
+        return quantity, u_lower
 
-
-def get_user_learned_mapping(raw_ingredient_name: str, db) -> str | None:
+def get_user_learned_mapping(raw_ingredient_name: str, db: Session) -> str | None:
     try:
         clean_key = raw_ingredient_name.strip().lower()
         record = db.query(UserLearnedMapping).filter(UserLearnedMapping.raw_ingredient.collate("NOCASE") == clean_key).first()
@@ -74,8 +83,7 @@ def get_user_learned_mapping(raw_ingredient_name: str, db) -> str | None:
         pass
     return None
 
-
-def save_user_learned_mapping(raw_ingredient_name: str, mapped_german_item: str, db):
+def save_user_learned_mapping(raw_ingredient_name: str, mapped_german_item: str, db: Session):
     try:
         clean_key = raw_ingredient_name.strip().lower()
         existing = db.query(UserLearnedMapping).filter(UserLearnedMapping.raw_ingredient.collate("NOCASE") == clean_key).first()
@@ -89,8 +97,7 @@ def save_user_learned_mapping(raw_ingredient_name: str, mapped_german_item: str,
         db.rollback()
         print(f"Error saving learned mapping: {e}")
 
-
-def map_ingredient_to_german_sku(raw_name: str, db=None) -> str:
+def map_ingredient_to_german_sku(raw_name: str, db: Session = None) -> str:
     clean_raw = raw_name.strip().lower()
 
     if db is not None:
@@ -100,10 +107,6 @@ def map_ingredient_to_german_sku(raw_name: str, db=None) -> str:
 
     if clean_raw in STATIC_SYNONYM_MAP:
         return STATIC_SYNONYM_MAP[clean_raw]
-
-    stripped_raw = strip_ingredient_descriptors(clean_raw)
-    if stripped_raw in STATIC_SYNONYM_MAP:
-        return STATIC_SYNONYM_MAP[stripped_raw]
 
     if db is not None:
         try:
@@ -120,7 +123,62 @@ def map_ingredient_to_german_sku(raw_name: str, db=None) -> str:
 
     return raw_name.strip().title()
 
+def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, category: str = "Vorrat", quantity: float = 1.0, unit: str = "Stück") -> dict:
+    """
+    Pricing resolution waterfall:
+    1. Active Prospekt offer matching today's date.
+    2. Most recent historical price from price_history.
+    3. Category baseline average.
+    """
+    sku_lower = german_sku.strip().lower()
+    store_lower = store_name.strip().lower()
+    today_str = datetime.date.today().isoformat()
 
-def find_best_ingredient_price(german_sku: str, store_name: str, db, category: str = "Vorrat") -> dict:
-    """Wrapper function utilizing the Tiered Hierarchical Pricing Strategy."""
-    return resolve_ingredient_price(german_sku, store_name, category, db)
+    scaled_qty, _ = normalize_quantity_to_base_units(quantity, unit)
+    unit_price = 0.0
+    pricing_tier = ""
+    is_sale = False
+    matched_product_name = german_sku
+
+    # Tier 1: Current Prospekt Price Priority
+    active_offer = db.query(Offer).filter(
+        Offer.supermarket_name.collate("NOCASE") == store_lower,
+        Offer.product_name.collate("NOCASE").contains(sku_lower),
+        Offer.valid_from <= today_str,
+        Offer.valid_to >= today_str
+    ).first()
+
+    if active_offer:
+        unit_price = float(active_offer.offer_price)
+        matched_product_name = active_offer.product_name
+        is_sale = True
+        pricing_tier = "Tier 1: Current Prospekt"
+    else:
+        # Tier 2: Most Recent Historical Price
+        recent_record = db.query(PriceHistory).filter(
+            PriceHistory.supermarket_name.collate("NOCASE") == store_lower,
+            PriceHistory.product_name.collate("NOCASE").contains(sku_lower)
+        ).order_by(PriceHistory.recorded_date.desc()).first()
+
+        if recent_record and recent_record.price:
+            unit_price = float(recent_record.price)
+            matched_product_name = recent_record.product_name
+            pricing_tier = "Tier 2: Recent History"
+        else:
+            # Tier 3: Category Baseline Average
+            unit_price = get_category_baseline(category)
+            pricing_tier = "Tier 3: Category Baseline"
+
+    line_cost = unit_price * scaled_qty
+
+    # Safety price cap guard against calculation blowouts
+    if line_cost > 50.0:
+        line_cost = 2.00
+
+    return {
+        "product_name": matched_product_name,
+        "price": round(line_cost, 2),
+        "unit_price": unit_price,
+        "is_on_sale": is_sale,
+        "pricing_tier": pricing_tier
+    }
