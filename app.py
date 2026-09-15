@@ -26,7 +26,7 @@ def get_db():
 
 
 # -----------------------------------------------------------------------------
-# MULTI-LANGUAGE DICTIONARIES & PARSER LOGIC (INGREDIENTS ONLY)
+# MULTI-LANGUAGE DICTIONARIES & PARSER LOGIC
 # -----------------------------------------------------------------------------
 
 UNIT_MAP = {
@@ -83,11 +83,8 @@ def translate_to_german_grocery(ingredient_raw: str) -> str:
     return ingredient_raw.strip().title()
 
 
-def parse_raw_recipe_text(raw_text: str) -> tuple[str, list[dict]]:
-    """
-    Parses recipe text and extracts ONLY the title and ingredient list,
-    explicitly skipping all instructions and preparation steps.
-    """
+def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
+    """Extracts only title and mapped ingredients, discarding cooking instructions."""
     lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
     if not lines:
         return "Untitled Recipe", []
@@ -96,8 +93,8 @@ def parse_raw_recipe_text(raw_text: str) -> tuple[str, list[dict]]:
     ingredients = []
 
     for line in lines[1:]:
-        # Stop parsing completely if an instruction/preparation section header is reached
-        if re.search(r"^(modo de preparo|instruções|instructions|fremgangsmåde|zubereitung|steps|preparo|preparation|method):", line, re.IGNORECASE):
+        # Stop parsing if an instruction header is encountered
+        if re.search(r"^(modo de preparo|instruções|instructions|fremgangsmåde|zubereitung|steps|preparo):", line, re.IGNORECASE):
             break
 
         cleaned_line = re.sub(r"^[•\-\*\d\.\)]+", "", line).strip()
@@ -140,7 +137,8 @@ def parse_raw_recipe_text(raw_text: str) -> tuple[str, list[dict]]:
     return title, ingredients
 
 
-def parse_pdf_recipes(file_stream) -> list[tuple[str, list[dict]]]:
+def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
+    """Parses multi-page PDFs, discarding instructions and retaining title + ingredients."""
     reader = PdfReader(file_stream)
     full_text = ""
     for page in reader.pages:
@@ -151,7 +149,7 @@ def parse_pdf_recipes(file_stream) -> list[tuple[str, list[dict]]]:
     raw_recipes = [r.strip() for r in full_text.split("---PAGE---") if r.strip()]
     parsed_batch = []
     for raw in raw_recipes:
-        t, ing = parse_raw_recipe_text(raw)
+        t, ing = parse_raw_recipe_ingredients_only(raw)
         if ing:
             parsed_batch.append((t, ing))
     return parsed_batch
@@ -285,7 +283,7 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
 # -----------------------------------------------------------------------------
 
 st.title("🛒 ProspektRecipeOptimizer")
-st.caption("Weekly offers & multi-language ingredient optimizer — Berlin 10369 (Landsberger Allee / Storkower Str.)")
+st.caption("Weekly offers & multi-language recipe planner — Berlin 10369 (Landsberger Allee / Storkower Str.)")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏷️ Top Deals This Week",
@@ -296,7 +294,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 
 # -----------------------------------------------------------------------------
-# TAB 1: TOP DEALS THIS WEEK (CLEAN DISPLAY)
+# TAB 1: TOP DEALS THIS WEEK
 # -----------------------------------------------------------------------------
 with tab1:
     st.header("Offers This Week (PLZ 10369)")
@@ -447,148 +445,156 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (CARD CRUD & INGREDIENT-ONLY IMPORTS)
+# TAB 3: RECIPE MANAGER (INLINE QUICK EDIT/DELETE & STREAMLINED IMPORTS)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
+    
+    crud_subtab1, crud_subtab2 = st.tabs([
+        "📋 Saved Recipes List (Quick Management)",
+        "📥 Add / Batch Import Recipes"
+    ])
 
-    db = get_db()
-
-    try:
-        # Import expander block
-        with st.expander("➕ Import / Add New Recipe", expanded=False):
-            import_mode = st.radio("Import Method:", ["Paste Raw Recipe Text", "Batch Upload PDF Recipes"], horizontal=True, key="mgr_import_mode")
-
-            if import_mode == "Batch Upload PDF Recipes":
-                uploaded_file = st.file_uploader("Upload a recipe collection PDF", type=["pdf"], key="pdf_uploader")
-                if uploaded_file is not None and st.button("Extract Ingredients & Save PDF Recipes"):
-                    parsed = parse_pdf_recipes(io.BytesIO(uploaded_file.read()))
-                    count = 0
-                    for t, ing in parsed:
-                        new_r = Recipe(title=t, instructions="Ingredients only.")
-                        new_r.ingredients = ing
-                        db.add(new_r)
-                        count += 1
-                    db.commit()
-                    st.success(f"Successfully imported {count} recipes (ingredients extracted)!")
-                    st.rerun()
-
-            else:
-                raw_text = st.text_area("Paste recipe text:", height=180, placeholder="Title\n• 200g Farinha de trigo\n• 3 Ovos", key="raw_text_input")
-                if st.button("Extract Ingredients & Save Recipe"):
-                    if raw_text.strip():
-                        t, ing = parse_raw_recipe_text(raw_text)
-                        if ing:
-                            new_r = Recipe(title=t, instructions="Ingredients only.")
-                            new_r.ingredients = ing
-                            db.add(new_r)
-                            db.commit()
-                            st.success(f"Saved recipe '{t}' with {len(ing)} ingredients!")
-                            st.rerun()
-
-        st.divider()
+    # -------------------------------------------------------------------------
+    # SUB-TAB 1: SAVED RECIPES LIST WITH INLINE ICONS
+    # -------------------------------------------------------------------------
+    with crud_subtab1:
         st.subheader("Saved Recipe Collection")
+        db = get_db()
+        try:
+            recipes_list = db.query(Recipe).all()
 
-        recipes_list = db.query(Recipe).all()
+            if not recipes_list:
+                st.info("No saved recipes found. Add or import recipes using the next tab.")
+            else:
+                for r in recipes_list:
+                    # Layout row: Title/expander on left, action icons on right
+                    c_title, c_edit, c_del = st.columns([0.82, 0.09, 0.09])
 
-        if not recipes_list:
-            st.info("No recipes saved in database.")
-        else:
-            # Render each recipe as an interactive card
-            for recipe in recipes_list:
-                with st.container(border=True):
-                    head_col, edit_col, del_col = st.columns([0.8, 0.1, 0.1])
-                    
-                    with head_col:
-                        st.subheader(f"🍲 {recipe.title}")
-                        st.caption(f"{len(recipe.ingredients)} extracted ingredients")
+                    with c_title:
+                        with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
+                            st.write("**Ingredients List:**")
+                            for ing in r.ingredients:
+                                orig = ing.get('original_name', ing['name'])
+                                st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
 
-                    with edit_col:
-                        btn_edit = st.button("✏️", key=f"edit_btn_{recipe.id}", help="Edit Recipe")
+                    with c_edit:
+                        # Pencil Popover for Inline Editing
+                        with st.popover("✏️"):
+                            st.write(f"**Edit: {r.title}**")
+                            with st.form(key=f"inline_edit_form_{r.id}"):
+                                new_title = st.text_input("Recipe Title", value=r.title)
+                                
+                                # Format ingredients into editable raw text
+                                ing_lines = []
+                                for ing in r.ingredients:
+                                    orig = ing.get('original_name', ing['name'])
+                                    ing_lines.append(f"{orig}, {ing['quantity']}, {ing['unit']}")
+                                
+                                new_ing_raw = st.text_area(
+                                    "Ingredients (Name, Quantity, Unit — 1 per line)",
+                                    value="\n".join(ing_lines),
+                                    height=140
+                                )
 
-                    with del_col:
-                        btn_del = st.button("🗑️", key=f"del_btn_{recipe.id}", help="Delete Recipe")
+                                if st.form_submit_button("Update Recipe"):
+                                    db_rec = db.query(Recipe).filter(Recipe.id == r.id).first()
+                                    if db_rec:
+                                        db_rec.title = new_title
+                                        
+                                        updated_ingredients = []
+                                        for line in new_ing_raw.strip().split("\n"):
+                                            if line.strip():
+                                                parts = [p.strip() for p in line.split(",")]
+                                                if len(parts) >= 3:
+                                                    try:
+                                                        qty = float(parts[1])
+                                                    except ValueError:
+                                                        qty = 1.0
+                                                    
+                                                    raw_name = parts[0]
+                                                    mapped_name = translate_to_german_grocery(raw_name)
+                                                    updated_ingredients.append({
+                                                        "name": mapped_name,
+                                                        "original_name": raw_name,
+                                                        "quantity": qty,
+                                                        "unit": normalize_unit(parts[2])
+                                                    })
+                                        
+                                        db_rec.ingredients = updated_ingredients
+                                        db.commit()
+                                        st.toast(f"Updated '{new_title}'!")
+                                        st.rerun()
 
-                    # Handle Deletion
-                    if btn_del:
-                        db_r = db.query(Recipe).filter(Recipe.id == recipe.id).first()
-                        if db_r:
-                            db.delete(db_r)
-                            db.commit()
-                            st.success(f"Deleted '{recipe.title}'!")
-                            st.rerun()
-
-                    # Render Card Details / Form Editor
-                    if st.session_state.get(f"editing_{recipe.id}", False) or btn_edit:
-                        st.session_state[f"editing_{recipe.id}"] = True
-                        
-                        st.markdown("---")
-                        st.write("**Edit Recipe Details:**")
-                        with st.form(f"form_edit_{recipe.id}"):
-                            new_title = st.text_input("Recipe Title", value=recipe.title)
-                            
-                            # Format ingredients to editable raw text
-                            ing_raw_lines = [f"{ing.get('original_name', ing['name'])}, {ing['quantity']}, {ing['unit']}" for ing in recipe.ingredients]
-                            new_ing_text = st.text_area(
-                                "Ingredients List (Format: Name, Quantity, Unit — one per line)",
-                                value="\n".join(ing_raw_lines),
-                                height=150
-                            )
-
-                            col_save, col_cancel = st.columns(2)
-                            with col_save:
-                                save_click = st.form_submit_button("💾 Save Changes")
-                            with col_cancel:
-                                cancel_click = st.form_submit_button("❌ Cancel")
-
-                            if save_click:
-                                db_r = db.query(Recipe).filter(Recipe.id == recipe.id).first()
-                                if db_r:
-                                    db_r.title = new_title
-                                    
-                                    # Parse updated ingredients
-                                    updated_ings = []
-                                    for line in new_ing_text.strip().split("\n"):
-                                        if line.strip():
-                                            parts = [p.strip() for p in line.split(",")]
-                                            if len(parts) >= 3:
-                                                try:
-                                                    q = float(parts[1])
-                                                except ValueError:
-                                                    q = 1.0
-                                                raw_n = parts[0]
-                                                mapped_n = translate_to_german_grocery(raw_n)
-                                                updated_ings.append({
-                                                    "name": mapped_n,
-                                                    "original_name": raw_n,
-                                                    "quantity": q,
-                                                    "unit": normalize_unit(parts[2])
-                                                })
-                                    
-                                    db_r.ingredients = updated_ings
-                                    db.commit()
-                                    st.session_state[f"editing_{recipe.id}"] = False
-                                    st.success("Changes saved!")
-                                    st.rerun()
-
-                            if cancel_click:
-                                st.session_state[f"editing_{recipe.id}"] = False
+                    with c_del:
+                        # Instant Trash Can Deletion Icon
+                        if st.button("🗑️", key=f"inline_del_btn_{r.id}", help="Delete recipe"):
+                            db_rec = db.query(Recipe).filter(Recipe.id == r.id).first()
+                            if db_rec:
+                                db.delete(db_rec)
+                                db.commit()
+                                st.toast(f"Deleted recipe '{r.title}'")
                                 st.rerun()
 
-                    else:
-                        # Standard card viewing mode
-                        ing_df = pd.DataFrame([
-                            {
-                                "Ingredient": ing.get('original_name', ing['name']),
-                                "Quantity": f"{ing['quantity']} {ing['unit']}",
-                                "German Store Equivalent": ing['name']
-                            }
-                            for ing in recipe.ingredients
-                        ])
-                        st.dataframe(ing_df, use_container_width=True, hide_index=True)
+        finally:
+            db.close()
 
-    finally:
-        db.close()
+    # -------------------------------------------------------------------------
+    # SUB-TAB 2: STREAMLINED IMPORT (INGREDIENTS-ONLY)
+    # -------------------------------------------------------------------------
+    with crud_subtab2:
+        st.subheader("Add / Import Recipes (Ingredients Only)")
+        st.caption("Parses Title and Ingredients while automatically discarding instructions.")
+        db = get_db()
+
+        try:
+            import_mode = st.radio("Import Method:", ["Batch Upload PDF Recipes", "Paste Raw Recipe Text"], horizontal=True, key="import_mode_choice")
+
+            if import_mode == "Batch Upload PDF Recipes":
+                uploaded_file = st.file_uploader("Upload a recipe collection PDF", type=["pdf"], key="pdf_uploader_clean")
+
+                if uploaded_file is not None:
+                    if st.button("Extract & Save Ingredients from PDF", key="btn_pdf_extract"):
+                        parsed_recipes = parse_pdf_recipes_ingredients_only(io.BytesIO(uploaded_file.read()))
+                        
+                        if parsed_recipes:
+                            count = 0
+                            for t, ing in parsed_recipes:
+                                new_recipe = Recipe(title=t, instructions="")
+                                new_recipe.ingredients = ing
+                                db.add(new_recipe)
+                                count += 1
+                            db.commit()
+                            st.success(f"Successfully imported {count} recipes from PDF!")
+                            st.rerun()
+                        else:
+                            st.error("Could not parse valid ingredients from PDF. Ensure text layout lists ingredients clearly.")
+
+            else:
+                sample_placeholder = (
+                    "Bolo de Cenoura\n"
+                    "• 200 Gram Farinha de trigo\n"
+                    "• 3 Unidades Ovo\n"
+                    "• 200 Gram Açúcar\n"
+                    "• 100 Gram Manteiga"
+                )
+                raw_text = st.text_area("Paste text here (Title on line 1, ingredients below):", height=180, placeholder=sample_placeholder, key="raw_text_clean")
+
+                if st.button("Parse & Save Ingredients", key="btn_text_extract"):
+                    if raw_text.strip():
+                        t, ing = parse_raw_recipe_ingredients_only(raw_text)
+                        if ing:
+                            new_recipe = Recipe(title=t, instructions="")
+                            new_recipe.ingredients = ing
+                            db.add(new_recipe)
+                            db.commit()
+                            st.success(f"Saved recipe ingredients: '{t}'!")
+                            st.rerun()
+                    else:
+                        st.warning("Please paste recipe text into the box first.")
+
+        finally:
+            db.close()
 
 
 # -----------------------------------------------------------------------------
