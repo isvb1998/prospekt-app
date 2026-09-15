@@ -67,6 +67,13 @@ INGREDIENT_TRANSLATION_MAP = {
     "mozzarella": "Mozzarella", "rice": "Reis"
 }
 
+# Words and headers to explicitly ignore during PDF extraction
+EXCLUDE_KEYWORDS = {
+    'prep time', 'servings', 'calories', 'protein', 'carbs', 'fat',
+    'ingredients', 'instructions', 'preparo', 'montagem', 'cozimento',
+    'g', 'min', 'piece', 'gram', 'milliliter', 'nutrition', 'facts', 'total time'
+}
+
 
 def normalize_unit(unit_str: str) -> str:
     cleaned = unit_str.strip().lower()
@@ -84,61 +91,79 @@ def translate_to_german_grocery(ingredient_raw: str) -> str:
 
 
 def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
-    """Extracts only title and mapped ingredients, discarding cooking instructions."""
+    """Extracts title and mapped ingredients strictly under the Ingredients header and before Instructions."""
     lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
     if not lines:
         return "Untitled Recipe", []
 
     title = lines[0].lstrip("#•-* ").strip()
     ingredients = []
+    
+    in_ingredients_section = False
 
     for line in lines[1:]:
-        # Stop parsing if an instruction header is encountered
-        if re.search(r"^(modo de preparo|instruções|instructions|fremgangsmåde|zubereitung|steps|preparo):", line, re.IGNORECASE):
+        clean_lower = line.lower().strip()
+        
+        # Check if we hit an instruction section to terminate extraction
+        if re.search(r"^(modo de preparo|instruções|instructions|fremgangsmåde|zubereitung|steps|preparo|montagem|cozimento):", clean_lower):
             break
 
-        cleaned_line = re.sub(r"^[•\-\*\d\.\)]+", "", line).strip()
-        if not cleaned_line:
+        # Check for ingredient section entry
+        if re.search(r"^(ingredientes|ingredients|zutasaten):", clean_lower):
+            in_ingredients_section = True
             continue
 
-        match = re.match(r"^([\d\.,/]+)\s*([a-zA-ZáàâãéèêíïóôõöúçÁÀÂÃÉÈÍÏÓÔÕÖÚÇ\.\s]+?)\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
-        
-        if match:
-            qty_str, unit_str, _, name_str = match.groups()
-            try:
-                qty_clean = qty_str.replace(",", ".")
-                if "/" in qty_clean:
-                    num, den = qty_clean.split("/")
-                    qty = float(num) / float(den)
-                else:
-                    qty = float(qty_clean)
-            except ValueError:
-                qty = 1.0
+        # If a header hasn't explicitly triggered, infer ingredient section starting after title
+        if not in_ingredients_section and not any(kw in clean_lower for kw in EXCLUDE_KEYWORDS):
+            in_ingredients_section = True
 
-            unit = normalize_unit(unit_str)
-            original_name = name_str.strip().title()
-            german_match_name = translate_to_german_grocery(name_str)
+        if in_ingredients_section:
+            # Skip metadata and standalone header lines matching exclude keywords
+            if clean_lower in EXCLUDE_KEYWORDS or any(clean_lower.startswith(kw) for kw in ['prep time', 'servings', 'calories', 'total time']):
+                continue
 
-            ingredients.append({
-                "name": german_match_name,
-                "original_name": original_name,
-                "quantity": qty,
-                "unit": unit
-            })
-        else:
-            german_match_name = translate_to_german_grocery(cleaned_line)
-            ingredients.append({
-                "name": german_match_name,
-                "original_name": cleaned_line.title(),
-                "quantity": 1.0,
-                "unit": "Stück"
-            })
+            cleaned_line = re.sub(r"^[•\-\*\d\.\)]+", "", line).strip()
+            if not cleaned_line or cleaned_line.lower() in EXCLUDE_KEYWORDS:
+                continue
+
+            match = re.match(r"^([\d\.,/]+)\s*([a-zA-ZáàâãéèêíïóôõöúçÁÀÂÃÉÈÍÏÓÔÕÖÚÇ\.\s]+?)\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
+            
+            if match:
+                qty_str, unit_str, _, name_str = match.groups()
+                try:
+                    qty_clean = qty_str.replace(",", ".")
+                    if "/" in qty_clean:
+                        num, den = qty_clean.split("/")
+                        qty = float(num) / float(den)
+                    else:
+                        qty = float(qty_clean)
+                except ValueError:
+                    qty = 1.0
+
+                unit = normalize_unit(unit_str)
+                original_name = name_str.strip().title()
+                german_match_name = translate_to_german_grocery(name_str)
+
+                ingredients.append({
+                    "name": german_match_name,
+                    "original_name": original_name,
+                    "quantity": qty,
+                    "unit": unit
+                })
+            else:
+                german_match_name = translate_to_german_grocery(cleaned_line)
+                ingredients.append({
+                    "name": german_match_name,
+                    "original_name": cleaned_line.title(),
+                    "quantity": 1.0,
+                    "unit": "Stück"
+                })
 
     return title, ingredients
 
 
 def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
-    """Parses multi-page PDFs, discarding instructions and retaining title + ingredients."""
+    """Parses multi-page PDFs, filtering metadata headers and instructions."""
     reader = PdfReader(file_stream)
     full_text = ""
     for page in reader.pages:
@@ -445,18 +470,18 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (INLINE QUICK EDIT/DELETE & STREAMLINED IMPORTS)
+# TAB 3: RECIPE MANAGER (INLINE QUICK MANAGEMENT & BATCH DELETE)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
     
     crud_subtab1, crud_subtab2 = st.tabs([
-        "📋 Saved Recipes List (Quick Management)",
+        "📋 Saved Recipes List & Batch Delete",
         "📥 Add / Batch Import Recipes"
     ])
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES LIST WITH INLINE ICONS
+    # SUB-TAB 1: SAVED RECIPES LIST WITH BATCH DELETION
     # -------------------------------------------------------------------------
     with crud_subtab1:
         st.subheader("Saved Recipe Collection")
@@ -467,9 +492,25 @@ with tab3:
             if not recipes_list:
                 st.info("No saved recipes found. Add or import recipes using the next tab.")
             else:
+                # Top Batch Selection Controls
+                col_sel_all, col_batch_del = st.columns([0.6, 0.4])
+                
+                with col_sel_all:
+                    select_all = st.checkbox("Select All / Deselect All Recipes", key="cb_select_all")
+
+                # Maintain selected IDs state
+                selected_recipe_ids = []
+
+                st.divider()
+
                 for r in recipes_list:
-                    # Layout row: Title/expander on left, action icons on right
-                    c_title, c_edit, c_del = st.columns([0.82, 0.09, 0.09])
+                    # Individual row layout: Checkbox + Title/Expander + Edit Icon + Delete Icon
+                    c_chk, c_title, c_edit, c_del = st.columns([0.06, 0.76, 0.09, 0.09])
+
+                    with c_chk:
+                        is_checked = st.checkbox("", value=select_all, key=f"chk_rec_{r.id}")
+                        if is_checked:
+                            selected_recipe_ids.append(r.id)
 
                     with c_title:
                         with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
@@ -479,13 +520,11 @@ with tab3:
                                 st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
 
                     with c_edit:
-                        # Pencil Popover for Inline Editing
                         with st.popover("✏️"):
                             st.write(f"**Edit: {r.title}**")
                             with st.form(key=f"inline_edit_form_{r.id}"):
                                 new_title = st.text_input("Recipe Title", value=r.title)
                                 
-                                # Format ingredients into editable raw text
                                 ing_lines = []
                                 for ing in r.ingredients:
                                     orig = ing.get('original_name', ing['name'])
@@ -527,8 +566,7 @@ with tab3:
                                         st.rerun()
 
                     with c_del:
-                        # Instant Trash Can Deletion Icon
-                        if st.button("🗑️", key=f"inline_del_btn_{r.id}", help="Delete recipe"):
+                        if st.button("🗑️", key=f"inline_del_btn_{r.id}", help="Delete single recipe"):
                             db_rec = db.query(Recipe).filter(Recipe.id == r.id).first()
                             if db_rec:
                                 db.delete(db_rec)
@@ -536,15 +574,27 @@ with tab3:
                                 st.toast(f"Deleted recipe '{r.title}'")
                                 st.rerun()
 
+                # Batch Action Bar at Top/Bottom
+                with col_batch_del:
+                    if selected_recipe_ids:
+                        if st.button(f"🗑️ Delete Selected Recipes ({len(selected_recipe_ids)})", type="primary"):
+                            for d_id in selected_recipe_ids:
+                                db_rec = db.query(Recipe).filter(Recipe.id == d_id).first()
+                                if db_rec:
+                                    db.delete(db_rec)
+                            db.commit()
+                            st.toast(f"Batch deleted {len(selected_recipe_ids)} recipes!")
+                            st.rerun()
+
         finally:
             db.close()
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 2: STREAMLINED IMPORT (INGREDIENTS-ONLY)
+    # SUB-TAB 2: STREAMLINED IMPORT (EXCLUDES METADATA & INSTRUCTIONS)
     # -------------------------------------------------------------------------
     with crud_subtab2:
-        st.subheader("Add / Import Recipes (Ingredients Only)")
-        st.caption("Parses Title and Ingredients while automatically discarding instructions.")
+        st.subheader("Add / Import Recipes (Clean Parser)")
+        st.caption("Filters out metadata (prep time, calories) and instructions, saving title + ingredients.")
         db = get_db()
 
         try:
