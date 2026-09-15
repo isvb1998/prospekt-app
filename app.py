@@ -269,7 +269,7 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
         for item in strategy["multi_store_split"]:
             if "Sale Offer" in item["Price Type"]:
                 sale_ingredients_count += 1
-                total_onsale_savings += 0.50  # Average estimate per sale item
+                total_onsale_savings += 0.50
 
         evaluated_recipes.append({
             "recipe": r,
@@ -279,7 +279,6 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
             "sale_count": sale_ingredients_count
         })
 
-    # Sort primarily by lowest estimated cost and highest active sale matches
     evaluated_recipes.sort(key=lambda x: (x["cheapest_cost"], -x["sale_count"]))
     return evaluated_recipes[:limit]
 
@@ -323,9 +322,9 @@ with tab1:
 
         col1, col2 = st.columns(2)
         with col1:
-            selected_stores = st.multiselect("Filter Supermarket", options=df["Supermarket"].unique(), default=df["Supermarket"].unique())
+            selected_stores = st.multiselect("Filter Supermarket", options=df["Supermarket"].unique(), default=df["Supermarket"].unique(), key="tab1_store_filter")
         with col2:
-            selected_cats = st.multiselect("Filter Category", options=df["Category"].unique(), default=df["Category"].unique())
+            selected_cats = st.multiselect("Filter Category", options=df["Category"].unique(), default=df["Category"].unique(), key="tab1_cat_filter")
 
         filtered_df = df[
             (df["Supermarket"].isin(selected_stores)) & 
@@ -337,8 +336,8 @@ with tab1:
         st.divider()
 
         with st.expander("🔍 Show Price History for an Offer Item"):
-                selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique(), key="tab1_product_select")
-                hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
+            selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique(), key="tab1_product_select")
+            hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
             
             if hist_records:
                 hist_df = pd.DataFrame([{"Date": h.recorded_date, "Price (€)": h.price, "Store": h.supermarket_name} for h in hist_records])
@@ -548,7 +547,7 @@ with tab4:
                 for h in history_records
             ])
 
-            selected_product = st.selectbox("Select product to inspect:", options=hist_df["Product"].unique())
+            selected_product = st.selectbox("Select product to inspect:", options=hist_df["Product"].unique(), key="tab4_product_select")
 
             with st.expander("📊 Click to View Price History Chart", expanded=True):
                 filtered_hist = hist_df[hist_df["Product"] == selected_product].sort_values(by="Date")
