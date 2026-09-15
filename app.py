@@ -14,9 +14,10 @@ except ImportError:
 from database import init_db, SessionLocal, Offer, Recipe, PriceHistory
 from scraper import run_scraper
 from engine import find_best_ingredient_price
+from seed_database import seed_database
 
 # -----------------------------------------------------------------------------
-# 1. PAGE CONFIG & BRANDING
+# 1. PAGE CONFIG & AUTOMATIC DATABASE INITIALIZATION / SEEDING
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Pro-Meal | Smart Circular Deals & Weekly Meal Optimization",
@@ -25,13 +26,24 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize Database and Ensure Offer Data Exists
+# Initialize Database Schema & Scraper Data
 init_db()
 run_scraper()
 
-
 def get_db():
     return SessionLocal()
+
+# Automatic Seeding Check on Startup
+def check_and_seed_on_startup():
+    db = get_db()
+    try:
+        recipe_count = db.query(Recipe).count()
+        if recipe_count == 0:
+            seed_database()
+    finally:
+        db.close()
+
+check_and_seed_on_startup()
 
 
 # -----------------------------------------------------------------------------
@@ -601,7 +613,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (CHEFKOCH URL & TEXT IMPORTER)
+# TAB 3: RECIPE MANAGER (CHEFKOCH URL & TEXT IMPORTER & MANUAL RE-SEED)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -621,7 +633,7 @@ with tab3:
             recipes_list = db.query(Recipe).all()
 
             if not recipes_list:
-                st.info("No saved recipes found. Import recipes using the next tab.")
+                st.info("No saved recipes found. Import recipes using the next tab or run database seeding.")
             else:
                 title_counts = Counter(r.title.strip().lower() for r in recipes_list)
                 duplicate_titles = {t for t, count in title_counts.items() if count >= 2}
@@ -763,11 +775,11 @@ with tab3:
             db.close()
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 2: CHEFKOCH URL & RECIPE ONE TEXT IMPORTER
+    # SUB-TAB 2: CHEFKOCH URL, RECIPE ONE TEXT IMPORTER & RE-SEED BUTTON
     # -------------------------------------------------------------------------
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
-        st.caption("Import directly from Chefkoch web links or paste Recipe One / plain text notes.")
+        st.caption("Import directly from Chefkoch web links, paste Recipe One text notes, or re-seed default recipes.")
         db = get_db()
 
         try:
@@ -822,6 +834,17 @@ with tab3:
                             st.warning("No valid ingredients matched. Enter title on line 1 and quantity/unit per line below.")
                     else:
                         st.warning("Please paste recipe text into the box first.")
+
+            st.divider()
+            
+            # Manual Re-Seed Database Section
+            st.subheader("Database Maintenance & Seed Defaults")
+            st.caption("Populate missing default recipes without overwriting existing data.")
+            
+            if st.button("🌱 Re-seed Default Recipes", key="btn_manual_reseed"):
+                seed_database()
+                st.toast("Database re-seeded successfully with default recipes!")
+                st.rerun()
 
         finally:
             db.close()
