@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from sqlalchemy import create_engine, Column, Integer, String, Float, Text, JSON, Boolean, ForeignKey, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -25,7 +26,6 @@ class Offer(Base):
     valid_from = Column(String, nullable=True)
     valid_to = Column(String, nullable=True)
 
-    # Hybrid properties for backward compatibility with UI components expecting older field names
     @property
     def current_price(self):
         return self.offer_price
@@ -72,8 +72,16 @@ class PriceHistory(Base):
     recorded_date = Column(String)
 
 
+class UserLearnedMapping(Base):
+    __tablename__ = "user_learned_mappings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    raw_ingredient = Column(String, unique=True, index=True)
+    mapped_german_item = Column(String)
+
+
 def apply_migrations():
-    """Safely adds missing columns to existing SQLite database tables without data loss."""
+    """Safely adds missing columns/tables to existing SQLite database without data loss."""
     inspector = inspect(engine)
 
     if inspector.has_table("offers"):
@@ -83,7 +91,6 @@ def apply_migrations():
                 conn.execute(text("ALTER TABLE offers RENAME COLUMN current_price TO offer_price;"))
             elif "offer_price" not in offer_cols:
                 conn.execute(text("ALTER TABLE offers ADD COLUMN offer_price FLOAT DEFAULT 0.0;"))
-            
             if "valid_from" not in offer_cols:
                 conn.execute(text("ALTER TABLE offers ADD COLUMN valid_from TEXT;"))
             if "valid_to" not in offer_cols:
