@@ -199,15 +199,10 @@ def clean_item_name_artifacts(name_str: str) -> str:
 
 
 def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
-    """
-    Parses recipe text block cleanly, extracting title and ingredients
-    while stopping hard at instruction sections.
-    """
     raw_lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
     if not raw_lines:
         return "Untitled Recipe", []
 
-    # Identify Recipe Title (skip lines starting with numbers or instruction terms)
     title = "Untitled Recipe"
     for line in raw_lines:
         clean_title_line = re.sub(r"^[•\-\*\d\.\)\|]+", "", line).strip()
@@ -221,11 +216,9 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
     for line in raw_lines:
         clean_lower = line.lower().strip()
 
-        # HARD STOP AT INSTRUCTIONS (PREVENT LEAKAGE)
         if re.search(INSTRUCTION_HEADERS_REGEX, clean_lower) or re.match(r"^(\d+[\.\)]|☑|☐|①|②|③)", clean_lower):
             break
 
-        # START RECORDING AFTER INGREDIENTS HEADER
         if re.search(r"^(ingredientes|ingredients|zutaten):", clean_lower):
             in_ingredients_section = True
             continue
@@ -237,7 +230,6 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
             if clean_lower in EXCLUDE_KEYWORDS or any(clean_lower.startswith(kw) for kw in ['prep time', 'servings', 'calories', 'total time']):
                 continue
 
-            # Strip bullet symbols (•, |, *, ☑) and numbers
             cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line).strip()
             if not cleaned_line or cleaned_line.lower() in EXCLUDE_KEYWORDS:
                 continue
@@ -282,11 +274,6 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
 
 
 def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
-    """
-    SPATIAL TWO-COLUMN PARSING ENGINE (pdfplumber)
-    Splits page into Left (0 to width/2) and Right (width/2 to width) columns
-    to prevent horizontal line mashing across PDF recipe columns.
-    """
     recipe_text_blocks = []
 
     if HAS_PDFPLUMBER:
@@ -296,9 +283,7 @@ def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict
                     w = page.width
                     h = page.height
                     
-                    # Left Column Box: (x0=0, top=0, x1=w/2, bottom=h)
                     left_bbox = (0, 0, w / 2, h)
-                    # Right Column Box: (x0=w/2, top=0, x1=w, bottom=h)
                     right_bbox = (w / 2, 0, w, h)
 
                     left_crop = page.crop(left_bbox)
@@ -307,7 +292,6 @@ def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict
                     left_text = left_crop.extract_text(layout=False) or ""
                     right_text = right_crop.extract_text(layout=False) or ""
 
-                    # Combine Left Column top-to-bottom, then Right Column top-to-bottom
                     page_combined = left_text + "\n" + right_text
                     if page_combined.strip():
                         recipe_text_blocks.append(page_combined)
@@ -785,10 +769,6 @@ with tab3:
                         if st.button(f"Delete Selected ({len(checked_ids)})", type="primary", key="btn_exec_bulk_delete"):
                             db.query(Recipe).filter(Recipe.id.in_(checked_ids)).delete(synchronize_session=False)
                             db.commit()
-                            
-                            for cid in checked_ids:
-                                st.session_state[f"rec_chk_{cid}"] = False
-                            st.session_state["select_all_master"] = False
                             
                             st.toast(f"Deleted {len(checked_ids)} recipe(s)!")
                             st.rerun()
