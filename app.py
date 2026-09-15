@@ -6,6 +6,13 @@ import pandas as pd
 import plotly.express as px
 from pypdf import PdfReader
 
+# Attempt pdfplumber import with graceful fallback to pypdf
+try:
+    import pdfplumber
+    HAS_PDFPLUMBER = True
+except ImportError:
+    HAS_PDFPLUMBER = False
+
 from database import init_db, SessionLocal, Offer, Recipe, PriceHistory
 from scraper import run_scraper
 from engine import find_best_ingredient_price
@@ -184,37 +191,64 @@ def translate_to_german_grocery(ingredient_raw: str) -> str:
     return ingredient_raw.strip().title()
 
 
+def clean_item_name_artifacts(name_str: str) -> str:
+    """Cleans up concatenated artifacts like Gramgarlic -> Garlic, Gramlean -> Lean Beef."""
+    cleaned = re.sub(r"^(gram|grams|grama|gramas|g|ml|kg|tbsp|tsp|cup|cups|piece|pieces|clove|cloves)\s*", "", name_str, flags=re.IGNORECASE).strip()
+    return cleaned if cleaned else name_str.strip()
+
+
 def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
-    lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
-    if not lines:
+    """
+    Parses recipe text with strict boundary cutoffs, multi-column bullet splitting,
+    and regex cleaning engines.
+    """
+    # 1. Split text into initial lines
+    raw_lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
+    if not raw_lines:
         return "Untitled Recipe", []
 
-    title = lines[0].lstrip("#•-* ").strip()
+    title = raw_lines[0].lstrip("#•-*| ").strip()
     ingredients = []
+    
+    # 2. Extract multi-column bullet delimiters into discrete tokens
+    flattened_entries = []
+    for line in raw_lines[1:]:
+        # Split on common column/bullet delimiters (•, |, *, -)
+        sub_tokens = re.split(r"[•\|\*\-\t]", line)
+        for token in sub_tokens:
+            t_clean = token.strip()
+            if t_clean:
+                flattened_entries.append(t_clean)
+
     in_ingredients_section = False
 
-    for line in lines[1:]:
-        clean_lower = line.lower().strip()
-        
-        if re.search(r"^(modo de preparo|instruções|instructions|fremgangsmåde|zubereitung|steps|preparo|montagem|cozimento):", clean_lower):
+    for entry in flattened_entries:
+        entry_lower = entry.lower().strip()
+
+        # 3. STRICT SECTION BOUNDARY CUTOFF
+        # Stop extraction immediately upon encountering instructions, cooking steps, or numbered steps
+        if re.search(r"^(instructions|preparo|preparação|montagem|cooking|vorbereitung|steps|modo de preparo|fremgangsmåde|zubereitung):", entry_lower) or \
+           re.match(r"^(\d+[\.\)]|☑|☐)", entry_lower):
             break
 
-        if re.search(r"^(ingredientes|ingredients|zutaten):", clean_lower):
+        # Boundary trigger for ingredient headers
+        if re.search(r"^(ingredientes|ingredients|zutaten):", entry_lower):
             in_ingredients_section = True
             continue
 
-        if not in_ingredients_section and not any(kw in clean_lower for kw in EXCLUDE_KEYWORDS):
+        if not in_ingredients_section and not any(kw in entry_lower for kw in EXCLUDE_KEYWORDS):
             in_ingredients_section = True
 
         if in_ingredients_section:
-            if clean_lower in EXCLUDE_KEYWORDS or any(clean_lower.startswith(kw) for kw in ['prep time', 'servings', 'calories', 'total time']):
+            if entry_lower in EXCLUDE_KEYWORDS or any(entry_lower.startswith(kw) for kw in ['prep time', 'servings', 'calories', 'total time']):
                 continue
 
-            cleaned_line = re.sub(r"^[•\-\*\d\.\)]+", "", line).strip()
-            if not cleaned_line or cleaned_line.lower() in EXCLUDE_KEYWORDS:
+            cleaned_entry = re.sub(r"^[•\-\*\d\.\)\|]+", "", entry).strip()
+            if not cleaned_entry or cleaned_entry.lower() in EXCLUDE_KEYWORDS:
                 continue
 
-            match = re.match(r"^([\d\.,/]+)\s*([a-zA-ZáàâãéèêíïóôõöúçÁÀÂÃÉÈÍÏÓÔÕÖÚÇ\.\s]+?)\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
+            # 4. REGEX INGREDIENT EXTRACTION ENGINE
+            match = re.match(r"^([\d\.,/]+)\s*([a-zA-ZáàâãéèêíïóôõöúçÁÀÂÃÉÈÍÏÓÔÕÖÚÇ\.\s]+?)\s+(de\s+)?(.+)$", cleaned_entry, re.IGNORECASE)
             
             if match:
                 qty_str, unit_str, _, name_str = match.groups()
@@ -229,8 +263,9 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
                     qty = 1.0
 
                 unit = normalize_unit(unit_str)
-                original_name = name_str.strip().title()
-                german_match_name = translate_to_german_grocery(name_str)
+                cleaned_name = clean_item_name_artifacts(name_str)
+                original_name = cleaned_name.title()
+                german_match_name = translate_to_german_grocery(cleaned_name)
 
                 ingredients.append({
                     "name": german_match_name,
@@ -239,24 +274,48 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
                     "unit": unit
                 })
             else:
-                german_match_name = translate_to_german_grocery(cleaned_line)
-                ingredients.append({
-                    "name": german_match_name,
-                    "original_name": cleaned_line.title(),
-                    "quantity": 1.0,
-                    "unit": "Stück"
-                })
+                cleaned_name = clean_item_name_artifacts(cleaned_entry)
+                # Only save if a valid item string remains
+                if len(cleaned_name) > 1:
+                    german_match_name = translate_to_german_grocery(cleaned_name)
+                    ingredients.append({
+                        "name": german_match_name,
+                        "original_name": cleaned_name.title(),
+                        "quantity": 1.0,
+                        "unit": "Stück"
+                    })
 
     return title, ingredients
 
 
 def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
-    reader = PdfReader(file_stream)
+    """
+    Layout-aware PDF parser utilizing pdfplumber (with fallback to pypdf).
+    Handles multi-column pages cleanly.
+    """
     full_text = ""
-    for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            full_text += text + "\n---PAGE---\n"
+    
+    if HAS_PDFPLUMBER:
+        try:
+            with pdfplumber.open(file_stream) as pdf:
+                for page in pdf.pages:
+                    # Layout-aware text extraction
+                    text = page.extract_text(layout=True)
+                    if text:
+                        full_text += text + "\n---PAGE---\n"
+        except Exception:
+            file_stream.seek(0)
+            reader = PdfReader(file_stream)
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    full_text += text + "\n---PAGE---\n"
+    else:
+        reader = PdfReader(file_stream)
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                full_text += text + "\n---PAGE---\n"
 
     raw_recipes = [r.strip() for r in full_text.split("---PAGE---") if r.strip()]
     parsed_batch = []
@@ -586,14 +645,12 @@ with tab3:
             if not recipes_list:
                 st.info("No saved recipes found. Add or import recipes using the next tab.")
             else:
-                # 1. DUPLICATE TITLE DETECTION ENGINE
                 title_counts = Counter(r.title.strip().lower() for r in recipes_list)
                 duplicate_titles = {t for t, count in title_counts.items() if count >= 2}
 
                 if duplicate_titles:
                     st.warning(f"⚠️ {len(duplicate_titles)} duplicate recipe title(s) detected in database. Look for the ⚠️ warning badge below.")
 
-                # 2. Real-time Search Bar
                 search_query = st.text_input("🔍 Search recipes by title or ingredient...", key="recipe_search_input").strip().lower()
 
                 if search_query:
@@ -610,13 +667,11 @@ with tab3:
                 else:
                     filtered_recipes = recipes_list
 
-                # Initialize state for recipe selection
                 for r in filtered_recipes:
                     key = f"rec_chk_{r.id}"
                     if key not in st.session_state:
                         st.session_state[key] = False
 
-                # Master Select All Callback
                 def sync_master_select():
                     master_val = st.session_state.get("select_all_master", False)
                     for r in filtered_recipes:
@@ -632,7 +687,6 @@ with tab3:
 
                 checked_ids = [r.id for r in filtered_recipes if st.session_state.get(f"rec_chk_{r.id}", False)]
 
-                # Sticky Action Bar for Bulk Delete
                 placeholder_bulk_bar = st.empty()
 
                 st.divider()
@@ -643,7 +697,6 @@ with tab3:
                     for r in filtered_recipes:
                         is_duplicate = r.title.strip().lower() in duplicate_titles
                         
-                        # Format Title Label with Warning Icon if Duplicate
                         if is_duplicate:
                             display_title = f"⚠️ {r.title}"
                             dup_subtitle = " *(⚠️ Duplicate title detected — check ingredients or rename)*"
@@ -701,11 +754,11 @@ with tab3:
                                                         except ValueError:
                                                             qty = 1.0
                                                         
-                                                        raw_name = parts[0]
+                                                        raw_name = clean_item_name_artifacts(parts[0])
                                                         mapped_name = translate_to_german_grocery(raw_name)
                                                         updated_ingredients.append({
                                                             "name": mapped_name,
-                                                            "original_name": raw_name,
+                                                            "original_name": raw_name.title(),
                                                             "quantity": qty,
                                                             "unit": normalize_unit(parts[2])
                                                         })
@@ -715,7 +768,6 @@ with tab3:
                                             st.toast(f"Updated '{new_title}'!")
                                             st.rerun()
 
-                # Dynamic Sticky Bulk Delete Header Bar
                 if checked_ids:
                     with placeholder_bulk_bar.container():
                         st.markdown(f"""
@@ -727,7 +779,6 @@ with tab3:
                             db.query(Recipe).filter(Recipe.id.in_(checked_ids)).delete(synchronize_session=False)
                             db.commit()
                             
-                            # Reset checkboxes state
                             for cid in checked_ids:
                                 st.session_state[f"rec_chk_{cid}"] = False
                             st.session_state["select_all_master"] = False
@@ -739,11 +790,11 @@ with tab3:
             db.close()
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 2: STREAMLINED IMPORT (EXCLUDES METADATA & INSTRUCTIONS)
+    # SUB-TAB 2: STREAMLINED IMPORT (LAYOUT-AWARE PDF & BOUNDARY PARSER)
     # -------------------------------------------------------------------------
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
-        st.caption("Filters out metadata headers and instructions, saving clean mapped ingredients.")
+        st.caption("Layout-aware PDF parsing + boundary cutoff rules. Filters out instructions and metadata.")
         db = get_db()
 
         try:
