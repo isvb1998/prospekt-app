@@ -1,22 +1,16 @@
 import re
 from rapidfuzz import process, fuzz
-from database import SessionLocal, Offer, Ingredient, Recipe
+from database import SessionLocal, Offer, UserLearnedMapping
 
-# -----------------------------------------------------------------------------
-# STATIC FALLBACK SYNONYM MAP (Multi-language Support: PT, EN, ES, DA, DE)
-# -----------------------------------------------------------------------------
 STATIC_SYNONYM_MAP = {
-    # Meats & Poultry
     "carne moída": "Rinderhackfleisch",
     "patinho moído": "Rinderhackfleisch",
     "lean ground beef": "Rinderhackfleisch",
     "ground beef": "Rinderhackfleisch",
     "peito de frango": "Hähnchenbrustfilet",
     "chicken breast": "Hähnchenbrustfilet",
-    "chicken thighs": "Hähnchenbrustfilet",
     "linguiça calabresa": "Mettwurst / Kabanos",
     "bacon": "Bacon / Frühstücksspeck",
-    # Dairy & Eggs
     "manteiga": "Butter",
     "margarina": "Margarine",
     "leite": "Vollmilch",
@@ -32,7 +26,6 @@ STATIC_SYNONYM_MAP = {
     "cream cheese": "Frischkäse",
     "requeijão": "Schmelzkäse / Frischkäse",
     "catupiry": "Schmelzkäse / Frischkäse",
-    # Pantry & Grains
     "farinha de trigo": "Weizenmehl",
     "all-purpose flour": "Weizenmehl",
     "self rising flour": "Weizenmehl",
@@ -43,30 +36,15 @@ STATIC_SYNONYM_MAP = {
     "rice": "Reis",
     "azeite": "Olivenöl",
     "olive oil": "Olivenöl",
-    "óleo": "Pflanzenöl",
-    "vegetable oil": "Pflanzenöl",
-    "shoyu": "Sojasauce",
-    "soy sauce": "Sojasauce",
-    "farfalle pasta": "Farfalle / Pasta",
-    "macarrão": "Farfalle / Pasta",
-    "fettuccine": "Fettuccine / Pasta",
+    "farfalle pasta": "Farfalle",
+    "macarrão": "Farfalle",
+    "creme de cebola": "Zwiebelsuppe / Zwiebelcreme",
     "passata de tomate": "Passierte Tomaten",
     "extrato de tomate": "Tomatenmark",
-    "tomato puree": "Tomatenmark",
-    "creme de cebola": "Zwiebelsuppe / Zwiebelcreme",
-    # Produce & Aromatics
     "cebola": "Zwiebeln",
     "onion": "Zwiebeln",
     "alho": "Knoblauch",
-    "garlic": "Knoblauch",
-    "batata": "Kartoffeln",
-    "potato": "Kartoffeln",
-    "tomate": "Tomaten",
-    "tomato": "Tomaten",
-    "limão": "Zitrone",
-    "lemon": "Zitrone",
-    "salsinha": "Petersilie",
-    "parsley": "Petersilie"
+    "garlic": "Knoblauch"
 }
 
 DESCRIPTOR_WORDS = [
@@ -78,7 +56,6 @@ DESCRIPTOR_WORDS = [
 
 
 def strip_ingredient_descriptors(raw_name: str) -> str:
-    """Removes common culinary preparation descriptors to isolate core item names."""
     cleaned = raw_name.lower().strip()
     words = cleaned.split()
     filtered_words = [w for w in words if w not in DESCRIPTOR_WORDS and not w.endswith("g") and not w.isdigit()]
@@ -87,9 +64,7 @@ def strip_ingredient_descriptors(raw_name: str) -> str:
 
 
 def get_user_learned_mapping(raw_ingredient_name: str, db) -> str | None:
-    """Checks the persistent `user_learned_mappings` table for manual correction overrides."""
     try:
-        from database import UserLearnedMapping
         clean_key = raw_ingredient_name.strip().lower()
         record = db.query(UserLearnedMapping).filter(UserLearnedMapping.raw_ingredient.collate("NOCASE") == clean_key).first()
         if record:
@@ -100,9 +75,7 @@ def get_user_learned_mapping(raw_ingredient_name: str, db) -> str | None:
 
 
 def save_user_learned_mapping(raw_ingredient_name: str, mapped_german_item: str, db):
-    """Saves or updates manual user mapping corrections for future ingredient imports."""
     try:
-        from database import UserLearnedMapping
         clean_key = raw_ingredient_name.strip().lower()
         existing = db.query(UserLearnedMapping).filter(UserLearnedMapping.raw_ingredient.collate("NOCASE") == clean_key).first()
         if existing:
@@ -117,21 +90,13 @@ def save_user_learned_mapping(raw_ingredient_name: str, mapped_german_item: str,
 
 
 def map_ingredient_to_german_sku(raw_name: str, db=None) -> str:
-    """
-    Dynamic Learning Engine matching pipeline:
-    1. Check user-learned manual correction overrides.
-    2. Check static multilingual synonym map.
-    3. Fuzzy match against dynamically scraped Prospekt SKU database (`known_market_skus` / `Offer`).
-    """
     clean_raw = raw_name.strip().lower()
 
-    # Step 1: Check User Learned Mappings
     if db is not None:
         learned = get_user_learned_mapping(clean_raw, db)
         if learned:
             return learned
 
-    # Step 2: Check Static Synonym Map
     if clean_raw in STATIC_SYNONYM_MAP:
         return STATIC_SYNONYM_MAP[clean_raw]
 
@@ -139,30 +104,25 @@ def map_ingredient_to_german_sku(raw_name: str, db=None) -> str:
     if stripped_raw in STATIC_SYNONYM_MAP:
         return STATIC_SYNONYM_MAP[stripped_raw]
 
-    # Step 3: Fuzzy Match against Active Prospekt Offers / Market SKUs
     if db is not None:
         try:
             offers = db.query(Offer).all()
             prospekt_products = [o.product_name for o in offers]
             if prospekt_products:
-                # Use rapidfuzz token_set_ratio for flexible semantic matching
                 match_result = process.extractOne(raw_name, prospekt_products, scorer=fuzz.token_set_ratio)
                 if match_result:
                     matched_name, score, _ = match_result
-                    if score >= 70:  # High confidence threshold
+                    if score >= 70:
                         return matched_name
         except Exception:
             pass
 
-    # Fallback to Title Cased raw string
     return raw_name.strip().title()
 
 
 def find_best_ingredient_price(german_sku: str, store_name: str, db) -> dict:
-    """Finds the best available price for a German SKU at a specific supermarket or across stores."""
     sku_lower = german_sku.strip().lower()
     
-    # Query active offers matching the store and SKU
     offer = db.query(Offer).filter(
         Offer.supermarket_name.collate("NOCASE") == store_name,
         Offer.product_name.collate("NOCASE").contains(sku_lower)
@@ -175,7 +135,6 @@ def find_best_ingredient_price(german_sku: str, store_name: str, db) -> dict:
             "is_on_sale": True
         }
 
-    # Fallback default estimated price if exact SKU not found in current weekly flyer
     return {
         "product_name": german_sku,
         "price": 1.49,
