@@ -1,12 +1,13 @@
 import re
 from collections import Counter
+import requests
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
 # Recipe Scraper for Chefkoch and standard cooking sites
 try:
-    from recipe_scrapers import scrape_me
+    from recipe_scrapers import scrape_html
     HAS_RECIPE_SCRAPERS = True
 except ImportError:
     HAS_RECIPE_SCRAPERS = False
@@ -299,11 +300,22 @@ def parse_recipe_one_or_text_paste(raw_text: str) -> tuple[str, list[dict]]:
 
 
 def parse_chefkoch_url(url: str) -> tuple[str, list[dict]]:
-    """Scrapes Chefkoch or standard recipe URLs via recipe-scrapers."""
+    """Scrapes Chefkoch or standard recipe URLs using browser User-Agent headers to avoid 403 blocks."""
     if not HAS_RECIPE_SCRAPERS:
         raise ImportError("`recipe-scrapers` package is missing. Install it using `pip install recipe-scrapers`.")
 
-    scraper = scrape_me(url)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    response = requests.get(url, headers=headers, timeout=10)
+    
+    if response.status_code == 403:
+        raise PermissionError("Chefkoch blocked the automated request. Please paste the recipe text directly using Option B.")
+    
+    response.raise_for_status()
+
+    scraper = scrape_html(response.text, org_url=url)
     title = scraper.title()
     raw_ingredients = scraper.ingredients()
     
@@ -805,8 +817,10 @@ with tab3:
                                 st.rerun()
                             else:
                                 st.warning(f"Scraped '{title}', but no valid ingredients were found.")
+                        except PermissionError as pe:
+                            st.error(str(pe))
                         except Exception as e:
-                            st.error(f"Could not scrape recipe from URL: {e}")
+                            st.error(f"Chefkoch blocked the automated request. Please paste the recipe text directly using Option B. (Error: {e})")
                     else:
                         st.warning("Please paste a valid recipe URL into the box first.")
 
