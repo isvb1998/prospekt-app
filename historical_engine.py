@@ -1,67 +1,106 @@
-from datetime import datetime, timedelta
+from datetime import datetime, date
 import statistics
 from sqlalchemy.orm import Session
 from database import PriceHistory, Offer
 
-# Staple articles requiring a full 6-month rolling window analysis
-STAPLE_ARTICLES = {
-    "weizenmehl",
-    "eier",
-    "butter",
-    "rinderhackfleisch",
-    "vollmilch",
-    "zwiebeln",
-    "salz",
-    "zucker"
+# Category-specific default baseline fallbacks (Tier 3 absolute last resort)
+# Ensures different stores/categories do not all resolve to identical fallback prices.
+CATEGORY_DEFAULTS = {
+    "Molkerei": 1.29,
+    "Fleisch": 4.49,
+    "Obst & Gemüse": 1.79,
+    "Vorrat": 0.99,
+    "Feinkost": 2.29,
+    "General": 1.49
 }
 
-def is_staple_article(product_name: str) -> bool:
-    """Determines if an item belongs to high-frequency staple categories."""
-    clean_name = product_name.strip().lower()
-    return any(staple in clean_name for staple in STAPLE_ARTICLES)
+def get_category_default(category: str) -> float:
+    """Returns a realistic baseline price based on the grocery category."""
+    if not category:
+        return 1.49
+    return CATEGORY_DEFAULTS.get(category.strip().title(), 1.49)
 
 
-def get_historical_fallback_price(german_sku: str, store_name: str, db: Session) -> float:
+def resolve_ingredient_price(german_sku: str, store_name: str, category: str, db: Session) -> dict:
     """
-    Calculates realistic baseline pricing using historical time-series data:
-    - For staples: Queries historical records from the past 6 months and returns the median price.
-    - For specialty/seasonal items: Queries the last 5 to 10 historical mentions and returns the median.
+    Tiered Hierarchical Pricing Strategy:
+    - Tier 1: Active Prospekt Price (Today falls between valid_from and valid_to).
+    - Tier 2: Most Recent Historical Price for this specific store (ORDER BY recorded_date DESC LIMIT 1).
+    - Tier 3: Cross-store historical average for this item, or category-based default baseline.
     """
     sku_lower = german_sku.strip().lower()
     store_lower = store_name.strip().lower()
+    today_str = date.today().isoformat()
 
-    is_staple = is_staple_article(sku_lower)
-    
-    query = db.query(PriceHistory).filter(
+    # -------------------------------------------------------------------------
+    # TIER 1: Active Prospekt Price (Today)
+    # -------------------------------------------------------------------------
+    active_offer = db.query(Offer).filter(
+        Offer.supermarket_name.collate("NOCASE") == store_lower,
+        Offer.product_name.collate("NOCASE").contains(sku_lower),
+        Offer.valid_from <= today_str,
+        Offer.valid_to >= today_str
+    ).first()
+
+    if active_offer:
+        # Record to price_history if not already present for today
+        log_price_history_entry(
+            product_name=active_offer.product_name,
+            supermarket_name=active_offer.supermarket_name,
+            price=active_offer.offer_price,
+            recorded_date=today_str,
+            db=db
+        )
+        return {
+            "product_name": active_offer.product_name,
+            "price": float(active_offer.offer_price),
+            "is_on_sale": True,
+            "pricing_tier": "Tier 1: Active Prospekt"
+        }
+
+    # -------------------------------------------------------------------------
+    # TIER 2: Most Recent Historical Price (Per Store)
+    # -------------------------------------------------------------------------
+    recent_store_record = db.query(PriceHistory).filter(
         PriceHistory.supermarket_name.collate("NOCASE") == store_lower,
         PriceHistory.product_name.collate("NOCASE").contains(sku_lower)
-    )
+    ).order_by(PriceHistory.recorded_date.desc()).first()
 
-    if is_staple:
-        # Past 6 months window relative to current execution date
-        six_months_ago = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
-        query = query.filter(PriceHistory.recorded_date >= six_months_ago)
-        records = query.order_by(PriceHistory.recorded_date.desc()).all()
-    else:
-        # Last 5 to 10 historical mentions for specialty items
-        records = query.order_by(PriceHistory.recorded_date.desc()).limit(10).all()
+    if recent_store_record and recent_store_record.price:
+        return {
+            "product_name": recent_store_record.product_name,
+            "price": float(recent_store_record.price),
+            "is_on_sale": False,
+            "pricing_tier": "Tier 2: Recent Store History"
+        }
 
-    if records:
-        prices = [r.price for r in records if r.price is not None and r.price > 0]
-        if prices:
-            return round(statistics.median(prices), 2)
-
-    # Fallback: check general brand/store history without strict date filters
-    fallback_records = db.query(PriceHistory).filter(
+    # -------------------------------------------------------------------------
+    # TIER 3: Cross-Store Historical Average / Category Baseline
+    # -------------------------------------------------------------------------
+    # Check if any other store has history for this item
+    cross_store_records = db.query(PriceHistory).filter(
         PriceHistory.product_name.collate("NOCASE").contains(sku_lower)
-    ).order_by(PriceHistory.recorded_date.desc()).limit(5).all()
+    ).all()
 
-    if fallback_records:
-        fallback_prices = [r.price for r in fallback_records if r.price is not None and r.price > 0]
-        if fallback_prices:
-            return round(statistics.median(fallback_prices), 2)
+    if cross_store_records:
+        all_prices = [r.price for r in cross_store_records if r.price is not None and r.price > 0]
+        if all_prices:
+            cross_store_avg = round(statistics.mean(all_prices), 2)
+            return {
+                "product_name": german_sku,
+                "price": cross_store_avg,
+                "is_on_sale": False,
+                "pricing_tier": "Tier 3: Cross-Store Average"
+            }
 
-    return 1.49
+    # Absolute Last Resort: Category-based default baseline
+    category_baseline = get_category_default(category)
+    return {
+        "product_name": german_sku,
+        "price": category_baseline,
+        "is_on_sale": False,
+        "pricing_tier": "Tier 3: Category Baseline"
+    }
 
 
 def log_price_history_entry(product_name: str, supermarket_name: str, price: float, recorded_date: str, db: Session):
