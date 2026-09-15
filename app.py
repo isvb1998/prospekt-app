@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -21,30 +22,214 @@ def get_db():
     return SessionLocal()
 
 
+# -----------------------------------------------------------------------------
+# MULTI-LANGUAGE DICTIONARIES & PARSER LOGIC
+# -----------------------------------------------------------------------------
+
+# Unit normalization mapping
+UNIT_MAP = {
+    # Portuguese / Spanish
+    "colher de chá": "TL", "colheres de chá": "TL", "colher de sopa": "EL", "colheres de sopa": "EL",
+    "xícara": "Tasse", "xícaras": "Tasse", "grama": "g", "gramas": "g", "quilo": "kg", "quilos": "kg",
+    "dente": "Zehe", "dentes": "Zehe", "unidade": "Stück", "unidades": "Stück", "lata": "Dose", "latas": "Dose",
+    "pitada": "Prise", "ml": "ml", "g": "g", "kg": "kg", "l": "L",
+    # Danish
+    "teskefuld": "TL", "spiseskefuld": "EL", "kop": "Tasse", "stk": "Stück", "stk.": "Stück", "fed": "Zehe",
+    # English
+    "teaspoon": "TL", "teaspoons": "TL", "tsp": "TL", "tablespoon": "EL", "tablespoons": "EL", "tbsp": "EL",
+    "cup": "Tasse", "cups": "Tasse", "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg",
+    "clove": "Zehe", "cloves": "Zehe", "piece": "Stück", "pieces": "Stück", "pinch": "Prise", "can": "Dose"
+}
+
+# Multi-language ingredient translation map (PT, DA, EN -> Standard German Grocery Term)
+INGREDIENT_TRANSLATION_MAP = {
+    # Portuguese
+    "farinha de trigo": "Weizenmehl",
+    "farinha": "Weizenmehl",
+    "iogurte natural": "Naturjoghurt",
+    "iogurte": "Joghurt",
+    "passata de tomate": "Passierte Tomaten",
+    "molho de tomate": "Passierte Tomaten",
+    "tomate pelado": "Gehackte Tomaten",
+    "mussarela": "Mozzarella",
+    "queijo mussarela": "Mozzarella",
+    "queijo": "Käse",
+    "linguiça calabresa": "Mettwurst",
+    "calabresa": "Mettwurst",
+    "ovo": "Eier",
+    "ovos": "Eier",
+    "leite": "Milch",
+    "manteiga": "Butter",
+    "açúcar": "Zucker",
+    "açucar": "Zucker",
+    "sal": "Salz",
+    "cebola": "Zwiebeln",
+    "cebolas": "Zwiebeln",
+    "alho": "Knoblauch",
+    "batata": "Kartoffeln",
+    "batatas": "Kartoffeln",
+    "carne moída": "Hackfleisch",
+    "carne moida": "Hackfleisch",
+    "arroz": "Reis",
+    "macarrão": "Spaghetti",
+    "espaguete": "Spaghetti",
+
+    # Danish
+    "hvedemel": "Weizenmehl",
+    "sukker": "Zucker",
+    "æg": "Eier",
+    "mælk": "Milch",
+    "smør": "Butter",
+    "kartofler": "Kartoffeln",
+    "løg": "Zwiebeln",
+    "hvidløg": "Knoblauch",
+    "Hakket oksekød": "Hackfleisch",
+    "hakkekød": "Hackfleisch",
+
+    # English
+    "flour": "Weizenmehl",
+    "wheat flour": "Weizenmehl",
+    "eggs": "Eier",
+    "egg": "Eier",
+    "ground beef": "Hackfleisch",
+    "minced meat": "Hackfleisch",
+    "minced beef": "Hackfleisch",
+    "milk": "Milch",
+    "butter": "Butter",
+    "sugar": "Zucker",
+    "salt": "Salz",
+    "onion": "Zwiebeln",
+    "onions": "Zwiebeln",
+    "garlic": "Knoblauch",
+    "potatoes": "Kartoffeln",
+    "potato": "Kartoffeln",
+    "spaghetti": "Spaghetti",
+    "pasta": "Spaghetti",
+    "strained tomatoes": "Passierte Tomaten",
+    "tomato paste": "Tomatenmark",
+    "natural yogurt": "Naturjoghurt",
+    "plain yogurt": "Naturjoghurt",
+    "mozzarella": "Mozzarella",
+    "rice": "Reis"
+}
+
+
+def normalize_unit(unit_str: str) -> str:
+    cleaned = unit_str.strip().lower()
+    return UNIT_MAP.get(cleaned, unit_str.strip())
+
+
+def translate_to_german_grocery(ingredient_raw: str) -> str:
+    cleaned = ingredient_raw.strip().lower()
+    
+    # Direct dictionary lookup
+    if cleaned in INGREDIENT_TRANSLATION_MAP:
+        return INGREDIENT_TRANSLATION_MAP[cleaned]
+    
+    # Partial substring matching lookup
+    for key, german_term in INGREDIENT_TRANSLATION_MAP.items():
+        if key in cleaned:
+            return german_term
+            
+    # Default fallback to original title-cased term
+    return ingredient_raw.strip().title()
+
+
+def parse_raw_recipe_text(raw_text: str) -> tuple[str, str, list[dict]]:
+    """
+    Parses unstructured recipe text (e.g., Recipe One output, bullet points, multi-language text).
+    Returns (title, instructions, parsed_ingredients_list)
+    """
+    lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
+    if not lines:
+        return "Untitled Recipe", "", []
+
+    title = lines[0].lstrip("#•-* ").strip()
+    instructions_lines = []
+    ingredients = []
+
+    is_instruction_section = False
+
+    for line in lines[1:]:
+        # Detect instruction sections
+        if re.search(r"^(modo de preparo|instruções|instructions|fremgangsmåde|zubereitung|steps|preparo):", line, re.IGNORECASE):
+            is_instruction_section = True
+            continue
+
+        if is_instruction_section:
+            instructions_lines.append(line)
+            continue
+
+        # Strip bullet points, leading symbols
+        cleaned_line = re.sub(r"^[•\-\*\d\.\)]+", "", line).strip()
+        if not cleaned_line:
+            continue
+
+        # Pattern matching for Quantity, Unit, and Ingredient Name
+        # Example: "200 Gram Farinha de trigo" or "2 colheres de sopa Passata de tomate" or "500g Hackfleisch"
+        match = re.match(r"^([\d\.,/]+)\s*([a-zA-ZáàâãéèêíïóôõöúçÁÀÂÃÉÈÍÏÓÔÕÖÚÇ\.\s]+?)\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
+        
+        if match:
+            qty_str, unit_str, _, name_str = match.groups()
+            try:
+                # Convert fractions or German commas if present
+                qty_clean = qty_str.replace(",", ".")
+                if "/" in qty_clean:
+                    num, den = qty_clean.split("/")
+                    qty = float(num) / float(den)
+                else:
+                    qty = float(qty_clean)
+            except ValueError:
+                qty = 1.0
+
+            unit = normalize_unit(unit_str)
+            original_name = name_str.strip().title()
+            german_match_name = translate_to_german_grocery(name_str)
+
+            ingredients.append({
+                "name": german_match_name,            # Used for supermarket fuzzy matching
+                "original_name": original_name,       # Preserved for display
+                "quantity": qty,
+                "unit": unit
+            })
+        else:
+            # Fallback if no explicit numeric quantity is extracted
+            german_match_name = translate_to_german_grocery(cleaned_line)
+            ingredients.append({
+                "name": german_match_name,
+                "original_name": cleaned_line.title(),
+                "quantity": 1.0,
+                "unit": "Stück"
+            })
+
+    instructions = "\n".join(instructions_lines) if instructions_lines else "No detailed instructions provided."
+    return title, instructions, ingredients
+
+
+# -----------------------------------------------------------------------------
+# WEEKLY AGGREGATION ENGINE
+# -----------------------------------------------------------------------------
+
 def aggregate_weekly_ingredients(selected_recipes_config):
-    """
-    Aggregates ingredients across selected recipes considering portion scaling.
-    selected_recipes_config: list of dicts [{'recipe': RecipeObj, 'servings': int}]
-    """
     aggregated = {}
 
     for item in selected_recipes_config:
         recipe = item["recipe"]
         servings = item["servings"]
-
-        # Default base recipe scale multiplier (assumes base recipe serves 1 portion/base unit)
         scale = servings
 
         for ing in recipe.ingredients:
-            name = ing["name"].strip()
+            german_name = ing["name"].strip()
+            orig_name = ing.get("original_name", german_name)
             qty = float(ing.get("quantity", 1.0)) * scale
             unit = ing.get("unit", "").strip()
 
-            key = (name.lower(), unit.lower())
+            key = (german_name.lower(), unit.lower())
 
             if key not in aggregated:
                 aggregated[key] = {
-                    "name": name,
+                    "german_name": german_name,
+                    "original_name": orig_name,
                     "quantity": qty,
                     "unit": unit
                 }
@@ -55,9 +240,6 @@ def aggregate_weekly_ingredients(selected_recipes_config):
 
 
 def calculate_weekly_basket_strategies(aggregated_ingredients, db):
-    """
-    Calculates Single-Store vs Multi-Store optimized costs for the aggregated weekly basket.
-    """
     stores = ["Aldi Nord", "Kaufland", "Lidl", "REWE", "Edeka", "Netto"]
     
     store_totals = {store: 0.0 for store in stores}
@@ -65,19 +247,22 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
     multi_store_split = []
 
     for ing in aggregated_ingredients:
-        ing_name = ing["name"]
+        german_name = ing["german_name"]
+        orig_name = ing["original_name"]
+        
         cheapest_price = float('inf')
         cheapest_store = ""
         cheapest_product_name = ""
         cheapest_is_sale = False
 
         for store in stores:
-            price_info = find_best_ingredient_price(ing_name, store, db)
+            price_info = find_best_ingredient_price(german_name, store, db)
             cost = price_info["price"]
             store_totals[store] += cost
             
             store_itemized[store].append({
-                "Ingredient": ing_name,
+                "Ingredient (Original)": orig_name,
+                "German Store Match": german_name,
                 "Quantity": f"{ing['quantity']:.1f} {ing['unit']}",
                 "Matched Product": price_info["product_name"],
                 "Price (€)": cost,
@@ -91,7 +276,8 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
                 cheapest_is_sale = price_info["is_on_sale"]
 
         multi_store_split.append({
-            "Ingredient": ing_name,
+            "Original Ingredient": orig_name,
+            "German Supermarket Match": german_name,
             "Quantity": f"{ing['quantity']:.1f} {ing['unit']}",
             "Buy At Supermarket": cheapest_store,
             "Matched Product": cheapest_product_name,
@@ -99,7 +285,6 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
             "Price (€)": cheapest_price
         })
 
-    # Sort single stores by total cost
     sorted_stores = sorted(store_totals.items(), key=lambda x: x[1])
     best_single_store = sorted_stores[0][0] if sorted_stores else "N/A"
     best_single_total = round(sorted_stores[0][1], 2) if sorted_stores else 0.0
@@ -118,21 +303,24 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
     }
 
 
-# Header
+# -----------------------------------------------------------------------------
+# APP UI & NAVIGATION
+# -----------------------------------------------------------------------------
+
 st.title("🛒 ProspektRecipeOptimizer")
-st.caption("Weekly offers & smart meal planner — Berlin 10369 (Landsberger Allee / Storkower Str.)")
+st.caption("Weekly offers & multi-language recipe planner — Berlin 10369 (Landsberger Allee / Storkower Str.)")
 
 # Navigation Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏷️ Top Deals This Week",
     "📅 Weekly Meal Planner & Grocery Strategy",
-    "📖 Recipe Manager",
+    "📖 Recipe Manager (Raw Text Import)",
     "📈 Price History"
 ])
 
 
 # -----------------------------------------------------------------------------
-# TAB 1: TOP DEALS THIS WEEK (CLEAN LAYOUT)
+# TAB 1: TOP DEALS THIS WEEK
 # -----------------------------------------------------------------------------
 with tab1:
     st.header("Offers This Week (PLZ 10369)")
@@ -153,7 +341,6 @@ with tab1:
 
         df = pd.DataFrame(table_data)
 
-        # Filters
         col1, col2 = st.columns(2)
         with col1:
             selected_stores = st.multiselect("Filter Supermarket", options=df["Supermarket"].unique(), default=df["Supermarket"].unique())
@@ -195,13 +382,11 @@ with tab2:
         all_recipes = db.query(Recipe).all()
         
         if not all_recipes:
-            st.warning("No recipes found in the database. Please add recipes in the 'Recipe Manager' tab.")
+            st.warning("No recipes found in the database. Add recipes in the 'Recipe Manager' tab.")
         else:
             st.subheader("1. Select Meals & Portions for the Week")
             
             selected_recipes_config = []
-            
-            # Recipe selection UI
             selected_titles = st.multiselect(
                 "Select recipes to include in your weekly plan:",
                 options=[r.title for r in all_recipes],
@@ -227,12 +412,13 @@ with tab2:
                         selected_recipes_config.append({"recipe": rec, "servings": servings})
 
                 st.divider()
-                st.subheader("2. Combined Weekly Ingredient List")
+                st.subheader("2. Combined Weekly Ingredient List (Auto-Translated)")
 
                 aggregated_ingredients = aggregate_weekly_ingredients(selected_recipes_config)
                 agg_df = pd.DataFrame([
                     {
-                        "Ingredient": item["name"],
+                        "Original Ingredient": item["original_name"],
+                        "German Grocery Match": item["german_name"],
                         "Total Required Quantity": f"{item['quantity']:.1f} {item['unit']}"
                     }
                     for item in aggregated_ingredients
@@ -244,7 +430,6 @@ with tab2:
 
                 strategy_data = calculate_weekly_basket_strategies(aggregated_ingredients, db)
 
-                # Metrics Overview
                 m1, m2, m3 = st.columns(3)
                 with m1:
                     st.metric(
@@ -267,7 +452,6 @@ with tab2:
 
                 st.markdown("---")
 
-                # Strategy A: One-Stop Single Supermarket Ranking
                 st.write("### Strategy A: Best Single Supermarket Ranking")
                 single_ranking_df = pd.DataFrame([
                     {
@@ -279,7 +463,6 @@ with tab2:
                 ])
                 st.dataframe(single_ranking_df, use_container_width=True, hide_index=True)
 
-                # Strategy B: Multi-Store Split Itemized Shopping List
                 st.write("### Strategy B: Maximum Savings Itemized Shopping List")
                 split_df = pd.DataFrame(strategy_data["multi_store_split"])
                 split_df["Price (€)"] = split_df["Price (€)"].map(lambda v: f"{v:.2f}")
@@ -290,54 +473,62 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (SUPPORTS TIKTOK, RECIPE ONE & CUSTOM ENTRIES)
+# TAB 3: RECIPE MANAGER (RAW TEXT PARSER WITH MULTI-LANG TRANSLATION)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
-    st.caption("Import or create custom recipes (supports TikTok, Recipe One, or manual entry).")
+    st.caption("Paste raw recipe text from Recipe One, TikTok, or multi-language formats (DE, PT, EN, DA).")
 
     db = get_db()
 
     try:
-        source_type = st.radio("Recipe Import Source:", ["Manual Entry", "Import Link (TikTok / Recipe One)"], horizontal=True)
+        st.subheader("Paste Raw Recipe Text")
+        
+        # Sample template placeholder showing Portuguese/English/Danish multi-language input
+        sample_placeholder = (
+            "Bolo de Cenoura com Cobertura\n"
+            "• 200 Gram Farinha de trigo\n"
+            "• 3 Unidades Ovo\n"
+            "• 200 Gram Açúcar\n"
+            "• 100 Gram Manteiga\n\n"
+            "Modo de preparo:\n"
+            "1. Misture os ingredientes e asse por 40 minutos."
+        )
 
-        with st.form("add_recipe_form", clear_on_submit=True):
-            if source_type == "Import Link (TikTok / Recipe One)":
-                recipe_url = st.text_input("Recipe URL (TikTok, Recipe One, etc.)")
-            
-            title = st.text_input("Recipe Title")
-            instructions = st.text_area("Cooking Instructions")
-            ingredients_raw = st.text_area(
-                "Ingredients (Format: Name, Quantity, Unit — one item per line)",
-                help="Example:\nHackfleisch, 500, g\nZwiebeln, 2, Stück"
-            )
-            
-            submitted = st.form_submit_button("Save Recipe")
-            
-            if submitted and title and instructions:
-                parsed_ingredients = []
-                for line in ingredients_raw.strip().split("\n"):
-                    if line:
-                        parts = [p.strip() for p in line.split(",")]
-                        if len(parts) >= 3:
-                            parsed_ingredients.append({
-                                "name": parts[0],
-                                "quantity": float(parts[1]),
-                                "unit": parts[2],
-                                "optional": False
-                            })
-                
-                # Append source link info to instructions if present
-                full_instructions = instructions
-                if source_type != "Manual Entry" and 'recipe_url' in locals() and recipe_url:
-                    full_instructions += f"\n\nSource: {recipe_url}"
+        raw_recipe_text = st.text_area(
+            "Paste full recipe here (Title on line 1, ingredients with bullet points/quantities):",
+            height=250,
+            placeholder=sample_placeholder
+        )
 
-                new_recipe = Recipe(title=title, instructions=full_instructions)
-                new_recipe.ingredients = parsed_ingredients
-                db.add(new_recipe)
-                db.commit()
-                st.success(f"Recipe '{title}' saved successfully!")
-                st.rerun()
+        if st.button("Parse & Save Recipe"):
+            if raw_recipe_text.strip():
+                parsed_title, parsed_instructions, parsed_ingredients = parse_raw_recipe_text(raw_recipe_text)
+
+                if parsed_ingredients:
+                    new_recipe = Recipe(title=parsed_title, instructions=parsed_instructions)
+                    new_recipe.ingredients = parsed_ingredients
+                    db.add(new_recipe)
+                    db.commit()
+
+                    st.success(f"Successfully parsed and saved recipe: '{parsed_title}'!")
+                    
+                    st.write("**Parsed & Translated Ingredient Match Preview:**")
+                    preview_df = pd.DataFrame([
+                        {
+                            "Original Name": ing["original_name"],
+                            "Quantity": ing["quantity"],
+                            "Unit": ing["unit"],
+                            "German Supermarket Term": ing["name"]
+                        }
+                        for ing in parsed_ingredients
+                    ])
+                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                    st.rerun()
+                else:
+                    st.error("Could not extract ingredients. Please check the text format.")
+            else:
+                st.warning("Please paste recipe text into the box first.")
 
         st.divider()
         st.subheader("Saved Recipes")
@@ -346,7 +537,8 @@ with tab3:
             with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
                 st.write("**Ingredients:**")
                 for ing in r.ingredients:
-                    st.write(f"- {ing['quantity']} {ing['unit']} {ing['name']}")
+                    orig = ing.get('original_name', ing['name'])
+                    st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
                 st.write("**Instructions:**")
                 st.write(r.instructions)
 
@@ -355,7 +547,7 @@ with tab3:
 
 
 # -----------------------------------------------------------------------------
-# TAB 4: PRICE HISTORY (CLICK-TO-VIEW)
+# TAB 4: PRICE HISTORY
 # -----------------------------------------------------------------------------
 with tab4:
     st.header("Historical Price Trends")
