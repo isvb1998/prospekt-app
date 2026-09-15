@@ -1,154 +1,183 @@
 import re
-from rapidfuzz import fuzz
-from database import Offer
+from rapidfuzz import process, fuzz
+from database import SessionLocal, Offer, Ingredient, Recipe
 
 # -----------------------------------------------------------------------------
-# 1. MULTI-LANGUAGE EXPLICIT SYNONYM NORMALIZER DICTIONARY (PASS 1)
+# STATIC FALLBACK SYNONYM MAP (Multi-language Support: PT, EN, ES, DA, DE)
 # -----------------------------------------------------------------------------
-EXPLICIT_SYNONYM_MAP = {
-    # English
-    "garlic salt": "Knoblauchsalz",
-    "self rising flour": "Weizenmehl",
-    "self-rising flour": "Weizenmehl",
-    "greek yogurt": "Naturjoghurt",
-    "greek yogurt (0% fat)": "Naturjoghurt",
+STATIC_SYNONYM_MAP = {
+    # Meats & Poultry
+    "carne moída": "Rinderhackfleisch",
+    "patinho moído": "Rinderhackfleisch",
     "lean ground beef": "Rinderhackfleisch",
-    "lean ground beef (96/4)": "Rinderhackfleisch",
     "ground beef": "Rinderhackfleisch",
-    "ground pork": "Schweinehackfleisch",
-    "minced beef": "Rinderhackfleisch",
-    "minced meat": "Hackfleisch",
-    "light mayo": "Mayonnaise",
-    "smoked paprika": "Paprikapulver edelsüß",
-    "all-purpose flour": "Weizenmehl",
-    "all purpose flour": "Weizenmehl",
-    "wheat flour": "Weizenmehl",
-    "strained tomatoes": "Passierte Tomaten",
-    "whole peeled tomatoes": "Gehackte Tomaten",
-    "diced tomatoes": "Gehackte Tomaten",
+    "peito de frango": "Hähnchenbrustfilet",
     "chicken breast": "Hähnchenbrustfilet",
     "chicken thighs": "Hähnchenbrustfilet",
-    "diced chicken breast": "Hähnchenbrustfilet",
-    "single cream": "Schlagsahne",
-    "double cream": "Schlagsahne",
-    "heavy cream": "Schlagsahne",
-    "evaporated milk": "Milch",
-    "cream cheese": "Frischkäse",
-    "light cream cheese": "Frischkäse",
-    "parmesan cheese": "Parmesan",
-    "freshly grated parmesan cheese": "Parmesan",
-    "puff pastry sheets": "Blätterteig",
-
-    # Portuguese / Spanish
-    "pastinha de alho": "Knoblauch",
-    "linguiça calabresa": "Mettwurst",
-    "calabresa": "Mettwurst",
-    "passata de tomate": "Passierte Tomaten",
-    "molho de tomate": "Passierte Tomaten",
-    "tomate pelado": "Gehackte Tomaten",
-    "mussarela": "Mozzarella",
-    "queijo mussarela": "Mozzarella",
-    "mussarela de búfala": "Mozzarella",
-    "patinho moído": "Rinderhackfleisch",
-    "carne moída": "Hackfleisch",
-    "carne moida": "Hackfleisch",
-    "farinha de trigo": "Weizenmehl",
-    "farinha de trigo branca": "Weizenmehl",
+    "linguiça calabresa": "Mettwurst / Kabanos",
+    "bacon": "Bacon / Frühstücksspeck",
+    # Dairy & Eggs
+    "manteiga": "Butter",
+    "margarina": "Margarine",
+    "leite": "Vollmilch",
+    "leite integral": "Vollmilch",
+    "ovo": "Eier",
+    "ovos": "Eier",
+    "eggs": "Eier",
     "iogurte natural": "Naturjoghurt",
-    "iogurte desnatado": "Naturjoghurt",
+    "greek yogurt": "Griechischer Joghurt",
+    "queijo": "Schnittkäse / Gouda",
+    "mussarela": "Mozzarella",
+    "muçarela": "Mozzarella",
+    "cream cheese": "Frischkäse",
+    "requeijão": "Schmelzkäse / Frischkäse",
+    "catupiry": "Schmelzkäse / Frischkäse",
+    # Pantry & Grains
+    "farinha de trigo": "Weizenmehl",
+    "all-purpose flour": "Weizenmehl",
+    "self rising flour": "Weizenmehl",
+    "açúcar": "Zucker",
+    "sal": "Salz",
+    "salt": "Salz",
+    "arroz": "Reis",
+    "rice": "Reis",
+    "azeite": "Olivenöl",
+    "olive oil": "Olivenöl",
+    "óleo": "Pflanzenöl",
+    "vegetable oil": "Pflanzenöl",
+    "shoyu": "Sojasauce",
+    "soy sauce": "Sojasauce",
+    "farfalle pasta": "Farfalle / Pasta",
+    "macarrão": "Farfalle / Pasta",
+    "fettuccine": "Fettuccine / Pasta",
+    "passata de tomate": "Passierte Tomaten",
     "extrato de tomate": "Tomatenmark",
-    "peito de frango": "Hähnchenbrustfilet",
-    "frango desfiado": "Hähnchenbrustfilet",
-    "massa folhada": "Blätterteig",
-    "repolho verde": "Kohl",
-    "repolho roxo": "Kohl",
-    "batata inglesa": "Kartoffeln",
-
-    # Danish
-    "hakket oksekød": "Rinderhackfleisch",
-    "hakkekød": "Hackfleisch",
-    "piskefløde": "Schlagsahne",
-    "hvedemel": "Weizenmehl"
+    "tomato puree": "Tomatenmark",
+    "creme de cebola": "Zwiebelsuppe / Zwiebelcreme",
+    # Produce & Aromatics
+    "cebola": "Zwiebeln",
+    "onion": "Zwiebeln",
+    "alho": "Knoblauch",
+    "garlic": "Knoblauch",
+    "batata": "Kartoffeln",
+    "potato": "Kartoffeln",
+    "tomate": "Tomaten",
+    "tomato": "Tomaten",
+    "limão": "Zitrone",
+    "lemon": "Zitrone",
+    "salsinha": "Petersilie",
+    "parsley": "Petersilie"
 }
 
+DESCRIPTOR_WORDS = [
+    "picado", "picadinho", "fatiado", "ralado", "cozido", "fresco", "fresca",
+    "de", "do", "da", "dos", "das", "sem", "com", "light", "desnatado",
+    "integral", "g", "ml", "kg", "or", "and", "chopped", "diced", "sliced",
+    "grated", "fresh", "organic", "peeled", "minced"
+]
 
-# -----------------------------------------------------------------------------
-# 2. HELPER: CLEAN DESCRIPTORS & PARENTHETICAL ARTIFACTS
-# -----------------------------------------------------------------------------
+
 def strip_ingredient_descriptors(raw_name: str) -> str:
-    """Strips parenthetical notes, numbers, and common modifier words."""
-    # Remove contents inside parentheses e.g. "Lean Ground Beef (96/4)" -> "Lean Ground Beef"
-    cleaned = re.sub(r"\(.*?\)", "", raw_name)
-    # Remove leading/trailing non-alphanumeric artifacts
-    cleaned = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", cleaned).strip()
-    return cleaned if cleaned else raw_name.strip()
+    """Removes common culinary preparation descriptors to isolate core item names."""
+    cleaned = raw_name.lower().strip()
+    words = cleaned.split()
+    filtered_words = [w for w in words if w not in DESCRIPTOR_WORDS and not w.endswith("g") and not w.isdigit()]
+    result = " ".join(filtered_words).strip()
+    return result if result else cleaned
 
 
-# -----------------------------------------------------------------------------
-# 3. TWO-PASS INGREDIENT MATCHING ENGINE
-# -----------------------------------------------------------------------------
-def map_ingredient_to_german_sku(raw_name: str) -> str:
+def get_user_learned_mapping(raw_ingredient_name: str, db) -> str | None:
+    """Checks the persistent `user_learned_mappings` table for manual correction overrides."""
+    try:
+        from database import UserLearnedMapping
+        clean_key = raw_ingredient_name.strip().lower()
+        record = db.query(UserLearnedMapping).filter(UserLearnedMapping.raw_ingredient.collate("NOCASE") == clean_key).first()
+        if record:
+            return record.mapped_german_item
+    except Exception:
+        pass
+    return None
+
+
+def save_user_learned_mapping(raw_ingredient_name: str, mapped_german_item: str, db):
+    """Saves or updates manual user mapping corrections for future ingredient imports."""
+    try:
+        from database import UserLearnedMapping
+        clean_key = raw_ingredient_name.strip().lower()
+        existing = db.query(UserLearnedMapping).filter(UserLearnedMapping.raw_ingredient.collate("NOCASE") == clean_key).first()
+        if existing:
+            existing.mapped_german_item = mapped_german_item
+        else:
+            new_record = UserLearnedMapping(raw_ingredient=clean_key, mapped_german_item=mapped_german_item)
+            db.add(new_record)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Error saving learned mapping: {e}")
+
+
+def map_ingredient_to_german_sku(raw_name: str, db=None) -> str:
     """
-    Pass 1: Direct lookup in explicit multi-language synonym dictionary.
-    Pass 2: Fall back to cleaned original title if no explicit key matches.
+    Dynamic Learning Engine matching pipeline:
+    1. Check user-learned manual correction overrides.
+    2. Check static multilingual synonym map.
+    3. Fuzzy match against dynamically scraped Prospekt SKU database (`known_market_skus` / `Offer`).
     """
-    cleaned = strip_ingredient_descriptors(raw_name).lower()
+    clean_raw = raw_name.strip().lower()
 
-    # Pass 1: Direct Exact / Substring Lookup in Explicit Map
-    if cleaned in EXPLICIT_SYNONYM_MAP:
-        return EXPLICIT_SYNONYM_MAP[cleaned]
+    # Step 1: Check User Learned Mappings
+    if db is not None:
+        learned = get_user_learned_mapping(clean_raw, db)
+        if learned:
+            return learned
 
-    for key, german_term in EXPLICIT_SYNONYM_MAP.items():
-        if key in cleaned:
-            return german_term
+    # Step 2: Check Static Synonym Map
+    if clean_raw in STATIC_SYNONYM_MAP:
+        return STATIC_SYNONYM_MAP[clean_raw]
 
-    # Pass 2: Fallback to cleaned Title Case
-    return cleaned.title()
+    stripped_raw = strip_ingredient_descriptors(clean_raw)
+    if stripped_raw in STATIC_SYNONYM_MAP:
+        return STATIC_SYNONYM_MAP[stripped_raw]
+
+    # Step 3: Fuzzy Match against Active Prospekt Offers / Market SKUs
+    if db is not None:
+        try:
+            offers = db.query(Offer).all()
+            prospekt_products = [o.product_name for o in offers]
+            if prospekt_products:
+                # Use rapidfuzz token_set_ratio for flexible semantic matching
+                match_result = process.extractOne(raw_name, prospekt_products, scorer=fuzz.token_set_ratio)
+                if match_result:
+                    matched_name, score, _ = match_result
+                    if score >= 70:  # High confidence threshold
+                        return matched_name
+        except Exception:
+            pass
+
+    # Fallback to Title Cased raw string
+    return raw_name.strip().title()
 
 
-def find_best_ingredient_price(ingredient_name: str, supermarket: str, db, min_threshold: float = 75.0) -> dict:
-    """
-    Token-Weighted Fuzzy Match against active flyer database offers.
-    Uses token_set_ratio to prevent short words (e.g., 'Salz') from falsely matching 'Garlic Salt'.
-    Falls back to regular estimated prices if match score < min_threshold (75.0).
-    """
-    normalized_search = map_ingredient_to_german_sku(ingredient_name)
+def find_best_ingredient_price(german_sku: str, store_name: str, db) -> dict:
+    """Finds the best available price for a German SKU at a specific supermarket or across stores."""
+    sku_lower = german_sku.strip().lower()
     
-    offers = db.query(Offer).filter(Offer.supermarket_name == supermarket).all()
+    # Query active offers matching the store and SKU
+    offer = db.query(Offer).filter(
+        Offer.supermarket_name.collate("NOCASE") == store_name,
+        Offer.product_name.collate("NOCASE").contains(sku_lower)
+    ).first()
 
-    best_offer = None
-    best_score = 0.0
-
-    for offer in offers:
-        # Calculate Token-Set Ratio to prioritize matching key sub-tokens correctly
-        score = fuzz.token_set_ratio(normalized_search.lower(), offer.product_name.lower())
-        
-        if score > best_score:
-            best_score = score
-            best_offer = offer
-
-    # Require minimum match threshold of 75
-    if best_offer and best_score >= min_threshold:
+    if offer:
         return {
-            "price": best_offer.current_price,
-            "product_name": best_offer.product_name,
-            "is_on_sale": True,
-            "match_score": best_score
+            "product_name": offer.product_name,
+            "price": offer.offer_price,
+            "is_on_sale": True
         }
 
-    # Fallback estimated default pricing if below threshold
-    DEFAULT_ESTIMATES = {
-        "Weizenmehl": 0.79, "Milch": 1.05, "Eier": 1.99, "Butter": 1.69,
-        "Zucker": 1.49, "Salz": 0.49, "Knoblauch": 0.89, "Zwiebeln": 1.19,
-        "Kartoffeln": 1.99, "Hackfleisch": 3.99, "Rinderhackfleisch": 4.49,
-        "Passierte Tomaten": 0.85, "Gehackte Tomaten": 0.85, "Mozzarella": 0.99,
-        "Naturjoghurt": 0.89, "Hähnchenbrustfilet": 4.99, "Reis": 1.49, "Spaghetti": 0.99
-    }
-    
-    fallback_price = DEFAULT_ESTIMATES.get(normalized_search, 1.99)
+    # Fallback default estimated price if exact SKU not found in current weekly flyer
     return {
-        "price": fallback_price,
-        "product_name": f"{normalized_search} (Reg. Price)",
-        "is_on_sale": False,
-        "match_score": 0.0
+        "product_name": german_sku,
+        "price": 1.49,
+        "is_on_sale": False
     }
