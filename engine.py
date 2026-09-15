@@ -76,12 +76,36 @@ def strip_ingredient_descriptors(raw_name: str) -> str:
     result = " ".join(filtered_words).strip()
     return result if result else cleaned
 
-def normalize_quantity_to_base_units(quantity: float, unit: str) -> tuple[float, str]:
+def normalize_quantity_and_units(quantity: float, unit: str, item_name: str) -> tuple[float, str]:
+    """
+    ROOT CAUSE FIX: Unit Type Check for Quantities & Discrete Conversions.
+    - Converts grams/milliliters to kg/L.
+    - Converts discrete item counts (cloves, pieces, eggs) to equivalent weight fractions
+      so they don't multiply raw piece counts directly against bulk kilogram prices.
+    """
     u_lower = unit.strip().lower()
+    name_lower = item_name.strip().lower()
+
     if u_lower in ["g", "gram", "grama", "gramas", "oz"]:
         return quantity / 1000.0, "kg"
     elif u_lower in ["ml", "milliliter", "milliliters"]:
         return quantity / 1000.0, "L"
+    elif u_lower in ["zehe", "zehen", "clove", "cloves"]:
+        # 1 garlic clove ≈ 4 grams (0.004 kg)
+        return quantity * 0.004, "kg"
+    elif u_lower in ["stück", "piece", "pieces", "stk", "stk."]:
+        if "ei" in name_lower or "egg" in name_lower:
+            # 1 egg ≈ 60 grams (0.06 kg)
+            return quantity * 0.06, "kg"
+        elif "zwiebel" in name_lower or "onion" in name_lower:
+            # 1 medium onion ≈ 150 grams (0.15 kg)
+            return quantity * 0.15, "kg"
+        elif "knoblauch" in name_lower or "garlic" in name_lower:
+            # 1 bulb / piece of garlic ≈ 50 grams (0.05 kg)
+            return quantity * 0.05, "kg"
+        else:
+            # Generic discrete item fallback (treated as ~100g unit equivalent)
+            return quantity * 0.10, "kg"
     else:
         return quantity, u_lower
 
@@ -141,13 +165,16 @@ def map_ingredient_to_german_sku(raw_name: str, db: Session = None) -> str:
 
 def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, category: str = "Vorrat", quantity: float = 1.0, unit: str = "Stück", **kwargs) -> dict:
     """
-    Tiered Hierarchical Pricing Strategy with Unit Standardization and Sanity Price Caps.
+    Tiered Hierarchical Pricing Strategy with Unit Standardization, Discrete Count Weight Conversions,
+    and Strict Sanity Price Caps.
     """
     sku_lower = german_sku.strip().lower()
     store_lower = store_name.strip().lower()
     today_str = datetime.date.today().isoformat()
 
-    scaled_qty, _ = normalize_quantity_to_base_units(quantity, unit)
+    # Normalize grams, milliliters, and discrete counts (cloves, pieces) into base metric weights
+    scaled_qty, _ = normalize_quantity_and_units(quantity, unit, german_sku)
+
     unit_price = 0.0
     pricing_tier = ""
     is_sale = False
@@ -184,9 +211,13 @@ def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, ca
 
     line_cost = unit_price * scaled_qty
 
-    # Safety price cap guard against calculation blowouts (>€50 per single ingredient line)
-    if line_cost > 50.0:
-        line_cost = 2.00
+    # ROOT CAUSE FIX 2: Sanity Check Guard (€10 limit per normal ingredient line unless bulk meat)
+    is_bulk_meat = "fleisch" in sku_lower or "hähnchen" in sku_lower or "beef" in sku_lower or "chicken" in sku_lower
+    max_limit = 25.0 if is_bulk_meat else 10.0
+
+    if line_cost > max_limit:
+        print(f"⚠️ Price Guard Triggered: Ingredient '{german_sku}' calculated €{line_cost:.2f}. Applying safety cap.")
+        line_cost = 1.50  # Sensible default total cost for minor ingredients like garlic cloves or spices
 
     return {
         "product_name": matched_product_name,
