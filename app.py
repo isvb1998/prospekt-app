@@ -14,7 +14,7 @@ except ImportError:
 from database import init_db, SessionLocal, Offer, Recipe, Ingredient, PriceHistory, UserLearnedMapping
 from scraper import run_scraper
 from engine import find_best_ingredient_price, map_ingredient_to_german_sku, strip_ingredient_descriptors, save_user_learned_mapping
-from seed_database import seed_database
+from seed_database import seed_database, seed_recipes
 
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIG & DATABASE SETUP
@@ -61,6 +61,7 @@ def check_and_seed_on_startup():
         recipe_count = db.query(Recipe).count()
         if recipe_count == 0:
             seed_database()
+            db.commit()
             st.cache_data.clear()
     finally:
         db.close()
