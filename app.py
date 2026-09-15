@@ -11,13 +11,13 @@ try:
 except ImportError:
     HAS_RECIPE_SCRAPERS = False
 
-from database import init_db, SessionLocal, Offer, Recipe, Ingredient, PriceHistory
+from database import init_db, SessionLocal, Offer, Recipe, Ingredient, PriceHistory, UserLearnedMapping
 from scraper import run_scraper
-from engine import find_best_ingredient_price, map_ingredient_to_german_sku, strip_ingredient_descriptors
+from engine import find_best_ingredient_price, map_ingredient_to_german_sku, strip_ingredient_descriptors, save_user_learned_mapping
 from seed_database import seed_database
 
 # -----------------------------------------------------------------------------
-# 1. PAGE CONFIG & AUTOMATIC DATABASE INITIALIZATION / SEEDING
+# 1. PAGE CONFIG & DATABASE SETUP
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Pro-Meal | Smart Circular Deals & Weekly Meal Optimization",
@@ -26,10 +26,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize Database Schema
 init_db()
 
-# Populate flyer deals safely on first launch if offers table is empty
 try:
     run_scraper()
 except Exception as e:
@@ -71,7 +69,7 @@ check_and_seed_on_startup()
 
 
 # -----------------------------------------------------------------------------
-# 2. CUSTOM CSS
+# 2. CUSTOM CSS STYLING
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -79,7 +77,6 @@ st.markdown("""
         background-color: #0e1117;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
-    
     .brand-header {
         background: linear-gradient(135deg, #1e2640 0%, #0f172a 100%);
         padding: 1.8rem 2rem;
@@ -102,19 +99,6 @@ st.markdown("""
         margin-top: 0.4rem;
         margin-bottom: 0;
     }
-    
-    .pro-card {
-        background-color: #1e293b;
-        border-radius: 12px;
-        padding: 1.25rem;
-        border: 1px solid #334155;
-        margin-bottom: 1rem;
-        transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-    .pro-card:hover {
-        border-color: #38bdf8;
-    }
-
     div[data-testid="stMetric"] {
         background-color: #1e293b !important;
         border: 1px solid #334155 !important;
@@ -134,18 +118,11 @@ st.markdown("""
         font-size: 1.8rem !important;
         font-weight: 700 !important;
     }
-
     .stButton>button {
         border-radius: 8px !important;
         font-weight: 600 !important;
         transition: all 0.2s ease !important;
     }
-    
-    .stTextInput input, .stTextArea textarea, .stSelectbox select {
-        border-radius: 8px !important;
-        border-color: #334155 !important;
-    }
-    
     .bulk-action-bar {
         background: #450a0a;
         border: 1px solid #991b1b;
@@ -161,9 +138,8 @@ st.markdown("""
 
 
 # -----------------------------------------------------------------------------
-# 3. MULTI-LANGUAGE DICTIONARIES & PARSING ENGINE
+# 3. PARSING ENGINE WITH LEARNING HOOKS
 # -----------------------------------------------------------------------------
-
 UNIT_MAP = {
     "colher de chá": "TL", "colheres de chá": "TL", "colher de sopa": "EL", "colheres de sopa": "EL",
     "xícara": "Tasse", "xícaras": "Tasse", "grama": "g", "gramas": "g", "quilo": "kg", "quilos": "kg",
@@ -199,7 +175,7 @@ def clean_item_name_artifacts(name_str: str) -> str:
     return cleaned if cleaned else name_str.strip()
 
 
-def parse_single_ingredient_line(line_text: str) -> dict | None:
+def parse_single_ingredient_line(line_text: str, db) -> dict | None:
     cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line_text).strip()
     if not cleaned_line:
         return None
@@ -228,7 +204,9 @@ def parse_single_ingredient_line(line_text: str) -> dict | None:
         unit = normalize_unit(unit_str)
         raw_clean_name = strip_ingredient_descriptors(clean_item_name_artifacts(name_str))
         original_name = raw_clean_name.title()
-        german_match_name = map_ingredient_to_german_sku(raw_clean_name)
+        
+        # Invoke Learning Engine Matching
+        german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
 
         return {
             "name": german_match_name,
@@ -241,7 +219,7 @@ def parse_single_ingredient_line(line_text: str) -> dict | None:
     else:
         raw_clean_name = strip_ingredient_descriptors(clean_item_name_artifacts(cleaned_line))
         if len(raw_clean_name) > 1:
-            german_match_name = map_ingredient_to_german_sku(raw_clean_name)
+            german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
             return {
                 "name": german_match_name,
                 "original_name": raw_clean_name.title(),
@@ -253,7 +231,7 @@ def parse_single_ingredient_line(line_text: str) -> dict | None:
     return None
 
 
-def parse_recipe_one_or_text_paste(raw_text: str) -> tuple[str, list[dict]]:
+def parse_recipe_one_or_text_paste(raw_text: str, db) -> tuple[str, list[dict]]:
     lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
     if not lines:
         return "Untitled Recipe", []
@@ -268,14 +246,14 @@ def parse_recipe_one_or_text_paste(raw_text: str) -> tuple[str, list[dict]]:
         if re.search(r"^(ingredientes|ingredients|zutaten):?", clean_lower):
             continue
             
-        ing_dict = parse_single_ingredient_line(line)
+        ing_dict = parse_single_ingredient_line(line, db)
         if ing_dict:
             ingredients.append(ing_dict)
 
     return title, ingredients
 
 
-def parse_chefkoch_url(url: str) -> tuple[str, list[dict]]:
+def parse_chefkoch_url(url: str, db) -> tuple[str, list[dict]]:
     if not HAS_RECIPE_SCRAPERS:
         raise ImportError("`recipe-scrapers` package is missing. Install it using `pip install recipe-scrapers`.")
 
@@ -296,7 +274,7 @@ def parse_chefkoch_url(url: str) -> tuple[str, list[dict]]:
     
     parsed_ingredients = []
     for raw_ing in raw_ingredients:
-        ing_dict = parse_single_ingredient_line(raw_ing)
+        ing_dict = parse_single_ingredient_line(raw_ing, db)
         if ing_dict:
             parsed_ingredients.append(ing_dict)
 
@@ -306,7 +284,6 @@ def parse_chefkoch_url(url: str) -> tuple[str, list[dict]]:
 # -----------------------------------------------------------------------------
 # 4. WEEKLY AGGREGATION & STRATEGY ENGINE
 # -----------------------------------------------------------------------------
-
 def aggregate_weekly_ingredients(selected_recipes_config):
     aggregated = {}
 
@@ -432,7 +409,7 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
 st.markdown("""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
-    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369)</p>
+    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization with Dynamic Offer Learning Engine (Berlin 10369)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -452,7 +429,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # TAB 1: TOP DEALS THIS WEEK
 # -----------------------------------------------------------------------------
 with tab1:
-    st.header("Weekly Store Circular Deals")
+    st.header("Weekly Store Circular Deals (Known Market SKUs)")
     db = get_db()
     
     try:
@@ -497,7 +474,7 @@ with tab1:
                 else:
                     st.info("No recorded price history available for this item.")
         else:
-            st.info("No circular deals found in database. Click 'Refresh Circular Deals' below to load initial offers.")
+            st.info("No circular deals found in database.")
             if st.button("🔄 Refresh Circular Deals"):
                 run_scraper()
                 st.rerun()
@@ -529,8 +506,6 @@ with tab2:
 
             if planning_mode == "MODE 1: Auto-Generated Lowest-Cost Meal Plan":
                 st.subheader("⚡ Top 5 Overall Lowest-Cost Recipes This Week")
-                st.caption("Automatically calculated by ranking stored recipes against active weekly offers.")
-
                 top_deals = calculate_cheapest_recipes(all_recipes, db, limit=5)
 
                 auto_config = []
@@ -606,7 +581,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER
+# TAB 3: RECIPE MANAGER (WITH LEARNING FEEDBACK LOOP)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -627,9 +602,6 @@ with tab3:
             else:
                 title_counts = Counter(r["title"].strip().lower() for r in recipes_list)
                 duplicate_titles = {t for t, count in title_counts.items() if count >= 2}
-
-                if duplicate_titles:
-                    st.warning(f"⚠️ {len(duplicate_titles)} duplicate recipe title(s) detected in database.")
 
                 search_query = st.text_input("🔍 Search recipes by title or ingredient...", key="recipe_search_input").strip().lower()
 
@@ -660,16 +632,10 @@ with tab3:
 
                 col_master, col_spacer = st.columns([0.4, 0.6])
                 with col_master:
-                    st.checkbox(
-                        "Select All / Deselect All",
-                        key="select_all_master",
-                        on_change=sync_master_select
-                    )
+                    st.checkbox("Select All / Deselect All", key="select_all_master", on_change=sync_master_select)
 
                 checked_ids = [r["id"] for r in filtered_recipes if st.session_state.get(f"rec_chk_{r['id']}", False)]
-
                 placeholder_bulk_bar = st.empty()
-
                 st.divider()
 
                 if not filtered_recipes:
@@ -677,7 +643,6 @@ with tab3:
                 else:
                     for r in filtered_recipes:
                         is_duplicate = r["title"].strip().lower() in duplicate_titles
-                        
                         display_title = f"⚠️ {r['title']}" if is_duplicate else r['title']
                         dup_subtitle = " *(⚠️ Duplicate title detected)*" if is_duplicate else ""
 
@@ -687,10 +652,7 @@ with tab3:
                             st.checkbox("", key=f"rec_chk_{r['id']}")
 
                         with c_title:
-                            with st.expander(
-                                f"🍲 **{display_title}** ({len(r['ingredients'])} ingredients){dup_subtitle}",
-                                expanded=False
-                            ):
+                            with st.expander(f"🍲 **{display_title}** ({len(r['ingredients'])} ingredients){dup_subtitle}", expanded=False):
                                 st.write("**Ingredients List & Mapped German SKUs:**")
                                 for ing in r["ingredients"]:
                                     orig = ing.get('original_name', ing.get('name', ''))
@@ -700,7 +662,7 @@ with tab3:
 
                         with c_edit:
                             with st.popover("[ Edit ]"):
-                                st.write(f"**Edit Recipe: {r['title']}**")
+                                st.write(f"**Edit Recipe & Learn Mappings: {r['title']}**")
                                 with st.form(key=f"inline_edit_form_{r['id']}"):
                                     new_title = st.text_input("Recipe Title", value=r["title"])
                                     
@@ -714,15 +676,16 @@ with tab3:
                                     new_ing_raw = st.text_area(
                                         "Ingredients List (Original Item, Quantity, Unit, Mapped SKU, Category)",
                                         value="\n".join(ing_lines),
-                                        height=180
+                                        height=180,
+                                        help="Editing the Mapped SKU here automatically saves to the learning feedback loop!"
                                     )
 
-                                    if st.form_submit_button("Save Changes"):
+                                    if st.form_submit_button("Save & Train Learning Engine"):
                                         db_rec = db.query(Recipe).filter(Recipe.id == r["id"]).first()
                                         if db_rec:
                                             db_rec.title = new_title
-                                            
                                             updated_ingredients = []
+                                            
                                             for line in new_ing_raw.strip().split("\n"):
                                                 if line.strip():
                                                     parts = [p.strip() for p in line.split(",")]
@@ -734,7 +697,14 @@ with tab3:
                                                         
                                                         raw_name = parts[0]
                                                         unit_val = normalize_unit(parts[2])
-                                                        mapped_name = parts[3].strip().title() if len(parts) >= 4 and parts[3].strip() else map_ingredient_to_german_sku(raw_name)
+                                                        
+                                                        if len(parts) >= 4 and parts[3].strip():
+                                                            mapped_name = parts[3].strip().title()
+                                                            # SAVE TO USER LEARNED MAPPINGS FEEDBACK LOOP
+                                                            save_user_learned_mapping(raw_name, mapped_name, db)
+                                                        else:
+                                                            mapped_name = map_ingredient_to_german_sku(raw_name, db)
+
                                                         cat_val = parts[4].strip().title() if len(parts) >= 5 and parts[4].strip() else "Vorrat"
 
                                                         updated_ingredients.append({
@@ -749,7 +719,7 @@ with tab3:
                                             db_rec.ingredients = updated_ingredients
                                             db.commit()
                                             st.cache_data.clear()
-                                            st.toast(f"Updated '{new_title}'!")
+                                            st.toast(f"Updated '{new_title}' and saved corrections to Learning Engine!")
                                             st.rerun()
 
                 if checked_ids:
@@ -779,7 +749,7 @@ with tab3:
 
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
-        st.caption("Import directly from Chefkoch web links, paste Recipe One text notes, or re-seed default recipes.")
+        st.caption("Import via Chefkoch URL or Plain Text. Newly imported ingredients are dynamically matched against active Prospekt offers and user-learned corrections.")
         db = get_db()
 
         try:
@@ -795,14 +765,14 @@ with tab3:
                 if st.button("🔗 Scrape & Save Recipe", key="btn_scrape_chefkoch"):
                     if chefkoch_url.strip():
                         try:
-                            title, ingredients = parse_chefkoch_url(chefkoch_url.strip())
+                            title, ingredients = parse_chefkoch_url(chefkoch_url.strip(), db)
                             if ingredients:
                                 new_recipe = Recipe(title=title, instructions="")
                                 new_recipe.ingredients = ingredients
                                 db.add(new_recipe)
                                 db.commit()
                                 st.cache_data.clear()
-                                st.success(f"Successfully scraped & imported '{title}' ({len(ingredients)} ingredients)!")
+                                st.success(f"Successfully scraped & imported '{title}' ({len(ingredients)} ingredients) with Dynamic Learning!")
                                 st.rerun()
                             else:
                                 st.warning(f"Scraped '{title}', but no valid ingredients were found.")
@@ -825,37 +795,31 @@ with tab3:
 
                 if st.button("Parse & Save Ingredients", key="btn_text_extract"):
                     if raw_text.strip():
-                        t, ing = parse_recipe_one_or_text_paste(raw_text)
+                        t, ing = parse_recipe_one_or_text_paste(raw_text, db)
                         if ing:
                             new_recipe = Recipe(title=t, instructions="")
                             new_recipe.ingredients = ing
                             db.add(new_recipe)
                             db.commit()
                             st.cache_data.clear()
-                            st.success(f"Saved recipe ingredients: '{t}'!")
+                            st.success(f"Saved recipe ingredients with Dynamic Learning: '{t}'!")
                             st.rerun()
                         else:
-                            st.warning("No valid ingredients matched. Enter title on line 1 and quantity/unit per line below.")
+                            st.warning("No valid ingredients matched.")
                     else:
                         st.warning("Please paste recipe text into the box first.")
 
             st.divider()
-            
             st.subheader("Database Maintenance & Seed Defaults")
-            st.caption("Wipe and re-seed all default PDF recipes through the updated Tokenizer & Synonym Normalizer Engine.")
-            
             if st.button("🌱 Re-seed Default PDF Recipes", key="btn_manual_reseed"):
                 db.query(Recipe).delete(synchronize_session=False)
                 db.commit()
-                
                 seed_database()
-                
                 st.cache_data.clear()
                 for k in list(st.session_state.keys()):
                     if k.startswith("rec_chk_"):
                         del st.session_state[k]
-                
-                st.toast("Database successfully re-seeded with default recipes!")
+                st.toast("Database successfully re-seeded!")
                 st.rerun()
 
         finally:
@@ -867,8 +831,6 @@ with tab3:
 # -----------------------------------------------------------------------------
 with tab4:
     st.header("Historical Price Trends")
-    st.caption("Interactive price trend visualizer.")
-    
     db = get_db()
     try:
         history_records = db.query(PriceHistory).all()
