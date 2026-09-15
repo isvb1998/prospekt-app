@@ -337,8 +337,8 @@ with tab1:
         st.divider()
 
         with st.expander("🔍 Show Price History for an Offer Item"):
-            selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique())
-            hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
+                selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique(), key="tab1_product_select")
+                hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
             
             if hist_records:
                 hist_df = pd.DataFrame([{"Date": h.recorded_date, "Price (€)": h.price, "Store": h.supermarket_name} for h in hist_records])
