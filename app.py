@@ -3,15 +3,16 @@ import pandas as pd
 import plotly.express as px
 from database import init_db, SessionLocal, Offer, Recipe, PriceHistory
 from scraper import run_scraper
-from engine import compare_recipe_store_costs
+from engine import find_best_ingredient_price
 
+# Page Configuration
 st.set_page_config(
     page_title="ProspektRecipeOptimizer - Berlin 10369",
     page_icon="🛒",
     layout="wide"
 )
 
-# Ensure database and weekly offer data exist
+# Initialize Database and Ensure Offer Data Exists
 init_db()
 run_scraper()
 
@@ -20,19 +21,118 @@ def get_db():
     return SessionLocal()
 
 
+def aggregate_weekly_ingredients(selected_recipes_config):
+    """
+    Aggregates ingredients across selected recipes considering portion scaling.
+    selected_recipes_config: list of dicts [{'recipe': RecipeObj, 'servings': int}]
+    """
+    aggregated = {}
+
+    for item in selected_recipes_config:
+        recipe = item["recipe"]
+        servings = item["servings"]
+
+        # Default base recipe scale multiplier (assumes base recipe serves 1 portion/base unit)
+        scale = servings
+
+        for ing in recipe.ingredients:
+            name = ing["name"].strip()
+            qty = float(ing.get("quantity", 1.0)) * scale
+            unit = ing.get("unit", "").strip()
+
+            key = (name.lower(), unit.lower())
+
+            if key not in aggregated:
+                aggregated[key] = {
+                    "name": name,
+                    "quantity": qty,
+                    "unit": unit
+                }
+            else:
+                aggregated[key]["quantity"] += qty
+
+    return list(aggregated.values())
+
+
+def calculate_weekly_basket_strategies(aggregated_ingredients, db):
+    """
+    Calculates Single-Store vs Multi-Store optimized costs for the aggregated weekly basket.
+    """
+    stores = ["Aldi Nord", "Kaufland", "Lidl", "REWE", "Edeka", "Netto"]
+    
+    store_totals = {store: 0.0 for store in stores}
+    store_itemized = {store: [] for store in stores}
+    multi_store_split = []
+
+    for ing in aggregated_ingredients:
+        ing_name = ing["name"]
+        cheapest_price = float('inf')
+        cheapest_store = ""
+        cheapest_product_name = ""
+        cheapest_is_sale = False
+
+        for store in stores:
+            price_info = find_best_ingredient_price(ing_name, store, db)
+            cost = price_info["price"]
+            store_totals[store] += cost
+            
+            store_itemized[store].append({
+                "Ingredient": ing_name,
+                "Quantity": f"{ing['quantity']:.1f} {ing['unit']}",
+                "Matched Product": price_info["product_name"],
+                "Price (€)": cost,
+                "Price Type": "Sale Offer 🏷️" if price_info["is_on_sale"] else "Regular Price 📌"
+            })
+
+            if cost < cheapest_price:
+                cheapest_price = cost
+                cheapest_store = store
+                cheapest_product_name = price_info["product_name"]
+                cheapest_is_sale = price_info["is_on_sale"]
+
+        multi_store_split.append({
+            "Ingredient": ing_name,
+            "Quantity": f"{ing['quantity']:.1f} {ing['unit']}",
+            "Buy At Supermarket": cheapest_store,
+            "Matched Product": cheapest_product_name,
+            "Price Type": "Sale Offer 🏷️" if cheapest_is_sale else "Regular Price 📌",
+            "Price (€)": cheapest_price
+        })
+
+    # Sort single stores by total cost
+    sorted_stores = sorted(store_totals.items(), key=lambda x: x[1])
+    best_single_store = sorted_stores[0][0] if sorted_stores else "N/A"
+    best_single_total = round(sorted_stores[0][1], 2) if sorted_stores else 0.0
+
+    multi_store_total = round(sum(item["Price (€)"] for item in multi_store_split), 2)
+    max_savings = round(best_single_total - multi_store_total, 2)
+
+    return {
+        "best_single_store": best_single_store,
+        "best_single_total": best_single_total,
+        "multi_store_total": multi_store_total,
+        "max_savings": max_savings,
+        "store_totals": store_totals,
+        "store_itemized": store_itemized,
+        "multi_store_split": multi_store_split
+    }
+
+
+# Header
 st.title("🛒 ProspektRecipeOptimizer")
-st.caption("Weekly offers & basket optimizer — Berlin 10369 (Landsberger Allee / Storkower Str.)")
+st.caption("Weekly offers & smart meal planner — Berlin 10369 (Landsberger Allee / Storkower Str.)")
 
 # Navigation Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
-    "🏷️ Weekly Offers",
-    "🧮 Recipe Basket Calculator",
+    "🏷️ Top Deals This Week",
+    "📅 Weekly Meal Planner & Grocery Strategy",
     "📖 Recipe Manager",
     "📈 Price History"
 ])
 
+
 # -----------------------------------------------------------------------------
-# TAB 1: WEEKLY OFFERS (CLEAN DISPLAY)
+# TAB 1: TOP DEALS THIS WEEK (CLEAN LAYOUT)
 # -----------------------------------------------------------------------------
 with tab1:
     st.header("Offers This Week (PLZ 10369)")
@@ -53,7 +153,7 @@ with tab1:
 
         df = pd.DataFrame(table_data)
 
-        # Clean Filters
+        # Filters
         col1, col2 = st.columns(2)
         with col1:
             selected_stores = st.multiselect("Filter Supermarket", options=df["Supermarket"].unique(), default=df["Supermarket"].unique())
@@ -65,12 +165,10 @@ with tab1:
             (df["Category"].isin(selected_cats))
         ]
 
-        # Clean Table Output
         st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
         st.divider()
 
-        # On-Demand Price Trend Inspection
         with st.expander("🔍 Show Price History for an Offer Item"):
             selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique())
             hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
@@ -87,74 +185,130 @@ with tab1:
 
 
 # -----------------------------------------------------------------------------
-# TAB 2: RECIPE COST CALCULATOR & STORE COMPARISON
+# TAB 2: WEEKLY MEAL PLANNER & GROCERY STRATEGY
 # -----------------------------------------------------------------------------
 with tab2:
-    st.header("Recipe Basket Price Comparison")
+    st.header("Weekly Meal Planner & Grocery Basket Strategy")
     db = get_db()
-    
+
     try:
-        recipes = db.query(Recipe).all()
-        recipe_titles = [r.title for r in recipes]
-        selected_title = st.selectbox("Choose a Recipe to Compare:", options=recipe_titles)
+        all_recipes = db.query(Recipe).all()
         
-        selected_recipe = next(r for r in recipes if r.title == selected_title)
-        analysis = compare_recipe_store_costs(selected_recipe, db)
-
-        # Highlight Metrics
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.metric(
-                label="Cheapest Single Supermarket Total",
-                value=f"€{analysis['cheapest_single_total']:.2f}",
-                delta=f"Store: {analysis['cheapest_single_store']}"
-            )
-        with col_b:
-            st.metric(
-                label="Multi-Store Optimized Total",
-                value=f"€{analysis['multi_store_total']:.2f}",
-                delta="Buying best deals across stores",
-                delta_color="normal"
+        if not all_recipes:
+            st.warning("No recipes found in the database. Please add recipes in the 'Recipe Manager' tab.")
+        else:
+            st.subheader("1. Select Meals & Portions for the Week")
+            
+            selected_recipes_config = []
+            
+            # Recipe selection UI
+            selected_titles = st.multiselect(
+                "Select recipes to include in your weekly plan:",
+                options=[r.title for r in all_recipes],
+                default=[all_recipes[0].title] if all_recipes else []
             )
 
-        st.subheader("Total Basket Price by Supermarket")
-        totals_df = pd.DataFrame([
-            {"Supermarket": store, "Total Basket Price (€)": price}
-            for store, price in sorted(analysis["store_totals"].items(), key=lambda x: x[1])
-        ])
-        st.dataframe(totals_df, use_container_width=True, hide_index=True)
+            if selected_titles:
+                st.write("**Adjust Servings per Selected Meal:**")
+                cols = st.columns(min(len(selected_titles), 4))
+                
+                for idx, title in enumerate(selected_titles):
+                    rec = next(r for r in all_recipes if r.title == title)
+                    col_idx = idx % 4
+                    with cols[col_idx]:
+                        servings = st.number_input(
+                            f"Portions: {rec.title}",
+                            min_value=1,
+                            max_value=20,
+                            value=1,
+                            step=1,
+                            key=f"servings_{rec.id}"
+                        )
+                        selected_recipes_config.append({"recipe": rec, "servings": servings})
 
-        # Multi-Store Optimized Basket Breakdown
-        with st.expander("🛒 View Multi-Store Optimized Basket Split"):
-            multi_df = pd.DataFrame([
-                {
-                    "Ingredient": item["ingredient"],
-                    "Best Store": item["best_store"],
-                    "Matched Product": item["product"],
-                    "Price (€)": f"{item['price']:.2f}"
-                }
-                for item in analysis["multi_store_breakdown"]
-            ])
-            st.dataframe(multi_df, use_container_width=True, hide_index=True)
+                st.divider()
+                st.subheader("2. Combined Weekly Ingredient List")
+
+                aggregated_ingredients = aggregate_weekly_ingredients(selected_recipes_config)
+                agg_df = pd.DataFrame([
+                    {
+                        "Ingredient": item["name"],
+                        "Total Required Quantity": f"{item['quantity']:.1f} {item['unit']}"
+                    }
+                    for item in aggregated_ingredients
+                ])
+                st.dataframe(agg_df, use_container_width=True, hide_index=True)
+
+                st.divider()
+                st.subheader("3. Shopping Strategy Optimization (PLZ 10369)")
+
+                strategy_data = calculate_weekly_basket_strategies(aggregated_ingredients, db)
+
+                # Metrics Overview
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric(
+                        label="Best Single Supermarket (One-Stop)",
+                        value=f"€{strategy_data['best_single_total']:.2f}",
+                        delta=f"Store: {strategy_data['best_single_store']}"
+                    )
+                with m2:
+                    st.metric(
+                        label="Maximum Savings (Multi-Store Split)",
+                        value=f"€{strategy_data['multi_store_total']:.2f}",
+                        delta="Across multiple local stores"
+                    )
+                with m3:
+                    st.metric(
+                        label="Extra Euros Saved with Split",
+                        value=f"€{strategy_data['max_savings']:.2f}",
+                        delta_color="normal"
+                    )
+
+                st.markdown("---")
+
+                # Strategy A: One-Stop Single Supermarket Ranking
+                st.write("### Strategy A: Best Single Supermarket Ranking")
+                single_ranking_df = pd.DataFrame([
+                    {
+                        "Supermarket": store,
+                        "Total Weekly Basket Cost (€)": f"{price:.2f}",
+                        "Status": "🏆 Cheapest One-Stop" if store == strategy_data['best_single_store'] else "Standard"
+                    }
+                    for store, price in sorted(strategy_data["store_totals"].items(), key=lambda x: x[1])
+                ])
+                st.dataframe(single_ranking_df, use_container_width=True, hide_index=True)
+
+                # Strategy B: Multi-Store Split Itemized Shopping List
+                st.write("### Strategy B: Maximum Savings Itemized Shopping List")
+                split_df = pd.DataFrame(strategy_data["multi_store_split"])
+                split_df["Price (€)"] = split_df["Price (€)"].map(lambda v: f"{v:.2f}")
+                st.dataframe(split_df, use_container_width=True, hide_index=True)
 
     finally:
         db.close()
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER
+# TAB 3: RECIPE MANAGER (SUPPORTS TIKTOK, RECIPE ONE & CUSTOM ENTRIES)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
+    st.caption("Import or create custom recipes (supports TikTok, Recipe One, or manual entry).")
+
     db = get_db()
 
     try:
+        source_type = st.radio("Recipe Import Source:", ["Manual Entry", "Import Link (TikTok / Recipe One)"], horizontal=True)
+
         with st.form("add_recipe_form", clear_on_submit=True):
-            st.subheader("Add New Recipe")
+            if source_type == "Import Link (TikTok / Recipe One)":
+                recipe_url = st.text_input("Recipe URL (TikTok, Recipe One, etc.)")
+            
             title = st.text_input("Recipe Title")
             instructions = st.text_area("Cooking Instructions")
             ingredients_raw = st.text_area(
-                "Ingredients (Format: Name, Quantity, Unit — one per line)",
+                "Ingredients (Format: Name, Quantity, Unit — one item per line)",
                 help="Example:\nHackfleisch, 500, g\nZwiebeln, 2, Stück"
             )
             
@@ -173,28 +327,39 @@ with tab3:
                                 "optional": False
                             })
                 
-                new_recipe = Recipe(title=title, instructions=instructions)
+                # Append source link info to instructions if present
+                full_instructions = instructions
+                if source_type != "Manual Entry" and 'recipe_url' in locals() and recipe_url:
+                    full_instructions += f"\n\nSource: {recipe_url}"
+
+                new_recipe = Recipe(title=title, instructions=full_instructions)
                 new_recipe.ingredients = parsed_ingredients
                 db.add(new_recipe)
                 db.commit()
-                st.success(f"Recipe '{title}' saved!")
+                st.success(f"Recipe '{title}' saved successfully!")
                 st.rerun()
 
         st.divider()
         st.subheader("Saved Recipes")
-        for r in db.query(Recipe).all():
-            st.write(f"- **{r.title}** ({len(r.ingredients)} ingredients)")
+        recipes_list = db.query(Recipe).all()
+        for r in recipes_list:
+            with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
+                st.write("**Ingredients:**")
+                for ing in r.ingredients:
+                    st.write(f"- {ing['quantity']} {ing['unit']} {ing['name']}")
+                st.write("**Instructions:**")
+                st.write(r.instructions)
 
     finally:
         db.close()
 
 
 # -----------------------------------------------------------------------------
-# TAB 4: PRICE TREND INSIGHTS (ON-DEMAND)
+# TAB 4: PRICE HISTORY (CLICK-TO-VIEW)
 # -----------------------------------------------------------------------------
 with tab4:
     st.header("Historical Price Trends")
-    st.caption("Price trend charts load on demand when selected.")
+    st.caption("Interactive price trend visualizer.")
     
     db = get_db()
     try:
@@ -211,12 +376,11 @@ with tab4:
             ])
 
             selected_product = st.selectbox(
-                "Select a product to view trend history:",
+                "Select a product to inspect history:",
                 options=hist_df["Product"].unique()
             )
 
-            # Interactive expander load
-            with st.expander("📊 Click to View Price Trend Chart", expanded=True):
+            with st.expander("📊 Click to View Price History Chart", expanded=True):
                 filtered_hist = hist_df[hist_df["Product"] == selected_product].sort_values(by="Date")
                 fig = px.line(
                     filtered_hist,
@@ -224,7 +388,7 @@ with tab4:
                     y="Price",
                     color="Supermarket",
                     markers=True,
-                    title=f"Historical Price: {selected_product}"
+                    title=f"Price History: {selected_product}"
                 )
                 fig.update_layout(yaxis_title="Price (€)", xaxis_title="Date")
                 st.plotly_chart(fig, use_container_width=True)
