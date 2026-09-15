@@ -52,7 +52,6 @@ def run_scraper():
         items = get_sample_flyer_data()
         today_str = datetime.date.today().isoformat()
 
-        # Clear outdated active offers and replace with fresh weekly Prospekt data
         db.query(Offer).delete()
         db.commit()
 
@@ -68,7 +67,6 @@ def run_scraper():
             )
             db.add(offer)
 
-            # Archive to price history
             archive_price_history(
                 product_name=item.get("product_name"),
                 supermarket_name=item.get("supermarket"),
