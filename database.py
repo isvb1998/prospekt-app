@@ -26,14 +26,6 @@ class Offer(Base):
     valid_from = Column(String, nullable=True)
     valid_to = Column(String, nullable=True)
 
-    @property
-    def current_price(self):
-        return self.offer_price
-
-    @property
-    def is_on_sale(self):
-        return True
-
 
 class Recipe(Base):
     __tablename__ = "recipes"
