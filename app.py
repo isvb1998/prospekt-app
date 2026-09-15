@@ -5,7 +5,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Recipe Scraper for Chefkoch and standard cooking sites
 try:
     from recipe_scrapers import scrape_html
     HAS_RECIPE_SCRAPERS = True
@@ -27,14 +26,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize Database Schema & Scraper Data
+# Initialize Database Schema
 init_db()
-run_scraper()
+
+# Populate flyer deals safely on first launch if offers table is empty
+try:
+    run_scraper()
+except Exception as e:
+    print(f"Scraper execution skipped or failed: {e}")
 
 def get_db():
     return SessionLocal()
 
-# Cached Recipe Loader to optimize render times
 @st.cache_data(ttl=300)
 def load_cached_recipes():
     db = get_db()
@@ -54,7 +57,6 @@ def load_cached_recipes():
     finally:
         db.close()
 
-# Automatic Seeding Check on Startup
 def check_and_seed_on_startup():
     db = get_db()
     try:
@@ -69,7 +71,7 @@ check_and_seed_on_startup()
 
 
 # -----------------------------------------------------------------------------
-# 2. CUSTOM CSS (MODERN MINIMALIST DASHBOARD DESIGN)
+# 2. CUSTOM CSS
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -460,39 +462,45 @@ with tab1:
                 "Supermarket": o.supermarket_name,
                 "Product Name": o.product_name,
                 "Category": o.category,
-                "Offer Price (€)": f"{o.current_price:.2f}",
-                "Original Price (€)": f"{o.original_price:.2f}"
+                "Offer Price (€)": f"{o.offer_price:.2f}",
+                "Original Price (€)": f"{(o.original_price or 0.0):.2f}"
             }
             for o in offers
         ]
 
         df = pd.DataFrame(table_data)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_stores = st.multiselect("Filter Supermarket", options=df["Supermarket"].unique(), default=df["Supermarket"].unique(), key="tab1_store_filter")
-        with col2:
-            selected_cats = st.multiselect("Filter Category", options=df["Category"].unique(), default=df["Category"].unique(), key="tab1_cat_filter")
+        if not df.empty:
+            col1, col2 = st.columns(2)
+            with col1:
+                selected_stores = st.multiselect("Filter Supermarket", options=df["Supermarket"].unique(), default=df["Supermarket"].unique(), key="tab1_store_filter")
+            with col2:
+                selected_cats = st.multiselect("Filter Category", options=df["Category"].unique(), default=df["Category"].unique(), key="tab1_cat_filter")
 
-        filtered_df = df[
-            (df["Supermarket"].isin(selected_stores)) & 
-            (df["Category"].isin(selected_cats))
-        ]
+            filtered_df = df[
+                (df["Supermarket"].isin(selected_stores)) & 
+                (df["Category"].isin(selected_cats))
+            ]
 
-        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
-        st.divider()
+            st.divider()
 
-        with st.expander("🔍 Show Price History for an Offer Item"):
-            selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique(), key="tab1_product_select")
-            hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
-            
-            if hist_records:
-                hist_df = pd.DataFrame([{"Date": h.recorded_date, "Price (€)": h.price, "Store": h.supermarket_name} for h in hist_records])
-                fig = px.line(hist_df, x="Date", y="Price (€)", color="Store", markers=True, title=f"Price History: {selected_item}")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No recorded price history available for this item.")
+            with st.expander("🔍 Show Price History for an Offer Item"):
+                selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique(), key="tab1_product_select")
+                hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
+                
+                if hist_records:
+                    hist_df = pd.DataFrame([{"Date": h.recorded_date, "Price (€)": h.price, "Store": h.supermarket_name} for h in hist_records])
+                    fig = px.line(hist_df, x="Date", y="Price (€)", color="Store", markers=True, title=f"Price History: {selected_item}")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No recorded price history available for this item.")
+        else:
+            st.info("No circular deals found in database. Click 'Refresh Circular Deals' below to load initial offers.")
+            if st.button("🔄 Refresh Circular Deals"):
+                run_scraper()
+                st.rerun()
                 
     finally:
         db.close()
@@ -598,7 +606,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (SAFE INGREDIENT PARSING & SEEDING)
+# TAB 3: RECIPE MANAGER
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -608,9 +616,6 @@ with tab3:
         "📥 Add / Import Recipes"
     ])
 
-    # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES COLLECTION
-    # -------------------------------------------------------------------------
     with crud_subtab1:
         st.subheader("Saved Recipes")
         db = get_db()
@@ -772,9 +777,6 @@ with tab3:
         finally:
             db.close()
 
-    # -------------------------------------------------------------------------
-    # SUB-TAB 2: ADD / IMPORT RECIPES & RE-SEED DEFAULTS
-    # -------------------------------------------------------------------------
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
         st.caption("Import directly from Chefkoch web links, paste Recipe One text notes, or re-seed default recipes.")
