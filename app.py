@@ -9,11 +9,14 @@ from database import init_db, SessionLocal, Offer, Recipe, PriceHistory
 from scraper import run_scraper
 from engine import find_best_ingredient_price
 
-# Page Configuration
+# -----------------------------------------------------------------------------
+# 1. PAGE CONFIG & BRANDING
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="ProspektRecipeOptimizer - Berlin 10369",
-    page_icon="🛒",
-    layout="wide"
+    page_title="Pro-Meal | Smart Circular Deals & Weekly Meal Optimization",
+    page_icon="🥗",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # Initialize Database and Ensure Offer Data Exists
@@ -26,25 +29,118 @@ def get_db():
 
 
 # -----------------------------------------------------------------------------
+# 2. CUSTOM CSS (MODERN MINIMALIST DASHBOARD DESIGN)
+# -----------------------------------------------------------------------------
+st.markdown("""
+<style>
+    /* Main Background & Clean Typography */
+    .main {
+        background-color: #0e1117;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    
+    /* Header Card Banner */
+    .brand-header {
+        background: linear-gradient(135deg, #1e2640 0%, #0f172a 100%);
+        padding: 1.8rem 2rem;
+        border-radius: 16px;
+        border: 1px solid #334155;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        margin-bottom: 2rem;
+    }
+    .brand-title {
+        color: #f8fafc;
+        font-size: 2.2rem;
+        font-weight: 800;
+        margin: 0;
+        letter-spacing: -0.025em;
+    }
+    .brand-tagline {
+        color: #38bdf8;
+        font-size: 0.95rem;
+        font-weight: 500;
+        margin-top: 0.4rem;
+        margin-bottom: 0;
+    }
+    
+    /* Custom Card Containers */
+    .pro-card {
+        background-color: #1e293b;
+        border-radius: 12px;
+        padding: 1.25rem;
+        border: 1px solid #334155;
+        margin-bottom: 1rem;
+        transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .pro-card:hover {
+        border-color: #38bdf8;
+    }
+
+    /* Metric Badges */
+    div[data-testid="stMetric"] {
+        background-color: #1e293b !important;
+        border: 1px solid #334155 !important;
+        border-radius: 12px !important;
+        padding: 1rem 1.25rem !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #94a3b8 !important;
+        font-size: 0.85rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #f8fafc !important;
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+    }
+
+    /* Primary & Danger Action Buttons */
+    .stButton>button {
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    /* Form Inputs */
+    .stTextInput input, .stTextArea textarea, .stSelectbox select {
+        border-radius: 8px !important;
+        border-color: #334155 !important;
+    }
+    
+    /* Sticky Top Action Bar for Bulk Delete */
+    .bulk-action-bar {
+        background: #450a0a;
+        border: 1px solid #991b1b;
+        padding: 0.85rem 1.25rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# -----------------------------------------------------------------------------
 # MULTI-LANGUAGE DICTIONARIES & PARSER LOGIC
 # -----------------------------------------------------------------------------
 
 UNIT_MAP = {
-    # Portuguese / Spanish
     "colher de chá": "TL", "colheres de chá": "TL", "colher de sopa": "EL", "colheres de sopa": "EL",
     "xícara": "Tasse", "xícaras": "Tasse", "grama": "g", "gramas": "g", "quilo": "kg", "quilos": "kg",
     "dente": "Zehe", "dentes": "Zehe", "unidade": "Stück", "unidades": "Stück", "lata": "Dose", "latas": "Dose",
     "pitada": "Prise", "ml": "ml", "g": "g", "kg": "kg", "l": "L",
-    # Danish
     "teskefuld": "TL", "spiseskefuld": "EL", "kop": "Tasse", "stk": "Stück", "stk.": "Stück", "fed": "Zehe",
-    # English
     "teaspoon": "TL", "teaspoons": "TL", "tsp": "TL", "tablespoon": "EL", "tablespoons": "EL", "tbsp": "EL",
     "cup": "Tasse", "cups": "Tasse", "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg",
     "clove": "Zehe", "cloves": "Zehe", "piece": "Stück", "pieces": "Stück", "pinch": "Prise", "can": "Dose"
 }
 
 INGREDIENT_TRANSLATION_MAP = {
-    # Portuguese
     "farinha de trigo": "Weizenmehl", "farinha": "Weizenmehl", "iogurte natural": "Naturjoghurt",
     "iogurte": "Joghurt", "passata de tomate": "Passierte Tomaten", "molho de tomate": "Passierte Tomaten",
     "tomate pelado": "Gehackte Tomaten", "mussarela": "Mozzarella", "queijo mussarela": "Mozzarella",
@@ -53,11 +149,9 @@ INGREDIENT_TRANSLATION_MAP = {
     "sal": "Salz", "cebola": "Zwiebeln", "cebolas": "Zwiebeln", "alho": "Knoblauch", "batata": "Kartoffeln",
     "batatas": "Kartoffeln", "carne moída": "Hackfleisch", "carne moida": "Hackfleisch", "arroz": "Reis",
     "macarrão": "Spaghetti", "espaguete": "Spaghetti",
-    # Danish
     "hvedemel": "Weizenmehl", "sukker": "Zucker", "æg": "Eier", "mælk": "Milch", "smør": "Butter",
     "kartofler": "Kartoffeln", "løg": "Zwiebeln", "hvidløg": "Knoblauch", "hakket oksekød": "Hackfleisch",
     "hakkekød": "Hackfleisch",
-    # English
     "flour": "Weizenmehl", "wheat flour": "Weizenmehl", "eggs": "Eier", "egg": "Eier",
     "ground beef": "Hackfleisch", "minced meat": "Hackfleisch", "minced beef": "Hackfleisch",
     "milk": "Milch", "butter": "Butter", "sugar": "Zucker", "salt": "Salz", "onion": "Zwiebeln",
@@ -296,12 +390,19 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
 
 
 # -----------------------------------------------------------------------------
-# APP UI & NAVIGATION
+# BRAND HEADER BANNER
 # -----------------------------------------------------------------------------
+st.markdown("""
+<div class="brand-header">
+    <h1 class="brand-title">🥗 Pro-Meal</h1>
+    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369)</p>
+</div>
+""", unsafe_allow_html=True)
 
-st.title("🛒 ProspektRecipeOptimizer")
-st.caption("Weekly offers & multi-language recipe planner — Berlin 10369 (Landsberger Allee / Storkower Str.)")
 
+# -----------------------------------------------------------------------------
+# APPLICATION TABS
+# -----------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏷️ Top Deals This Week",
     "📅 Weekly Meal Planner",
@@ -314,7 +415,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # TAB 1: TOP DEALS THIS WEEK
 # -----------------------------------------------------------------------------
 with tab1:
-    st.header("Offers This Week (PLZ 10369)")
+    st.header("Weekly Store Circular Deals")
     db = get_db()
     
     try:
@@ -366,7 +467,7 @@ with tab1:
 # TAB 2: WEEKLY MEAL PLANNER
 # -----------------------------------------------------------------------------
 with tab2:
-    st.header("Weekly Meal Planner")
+    st.header("Weekly Meal Planner & Basket Optimization")
     db = get_db()
 
     try:
@@ -462,21 +563,21 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (MULTISELECT BULK DELETE & INLINE ACTIONS)
+# TAB 3: RECIPE MANAGER (CHECKBOX BULK DELETE & INLINE ACTIONS)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
     
     crud_subtab1, crud_subtab2 = st.tabs([
-        "📋 Saved Recipes List & Bulk Delete",
+        "📋 Saved Recipe Collection",
         "📥 Add / Batch Import Recipes"
     ])
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES LIST & MULTISELECT BULK DELETE
+    # SUB-TAB 1: SAVED RECIPES LIST WITH CHECKBOX-BASED BULK DELETION
     # -------------------------------------------------------------------------
     with crud_subtab1:
-        st.subheader("Saved Recipe Collection")
+        st.subheader("Saved Recipes")
         db = get_db()
         try:
             recipes_list = db.query(Recipe).all()
@@ -484,31 +585,24 @@ with tab3:
             if not recipes_list:
                 st.info("No saved recipes found. Add or import recipes using the next tab.")
             else:
-                recipe_map = {f"{r.title} (ID: {r.id})": r.id for r in recipes_list}
+                # Top Select All Toggle
+                select_all = st.checkbox("Select All / Deselect All", key="cb_select_all_recipes")
 
-                # Reliable Multiselect Bulk Delete Container
-                with st.expander("🗑️ Bulk Delete Recipes", expanded=False):
-                    selected_to_delete = st.multiselect(
-                        "Select Recipes to Delete in Bulk:",
-                        options=list(recipe_map.keys()),
-                        key="multiselect_bulk_delete"
-                    )
+                # Collect checked recipe IDs
+                checked_ids = []
 
-                    if selected_to_delete:
-                        if st.button(f"🗑️ Permanently Delete {len(selected_to_delete)} Selected Recipe(s)", type="primary"):
-                            ids_to_del = [recipe_map[title] for title in selected_to_delete]
-                            db.query(Recipe).filter(Recipe.id.in_(ids_to_del)).delete(synchronize_session=False)
-                            db.commit()
-                            
-                            st.session_state["multiselect_bulk_delete"] = []
-                            st.success(f"Successfully deleted {len(ids_to_del)} recipe(s)!")
-                            st.rerun()
+                # Render Bulk Action Bar if items selected
+                placeholder_bulk_bar = st.empty()
 
                 st.divider()
 
-                # List view with inline single-recipe edit & delete icons
                 for r in recipes_list:
-                    c_title, c_edit, c_del = st.columns([0.82, 0.09, 0.09])
+                    c_chk, c_title, c_edit = st.columns([0.06, 0.84, 0.10])
+
+                    with c_chk:
+                        is_checked = st.checkbox("", value=select_all, key=f"rec_chk_{r.id}")
+                        if is_checked:
+                            checked_ids.append(r.id)
 
                     with c_title:
                         with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
@@ -518,8 +612,8 @@ with tab3:
                                 st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
 
                     with c_edit:
-                        with st.popover("✏️"):
-                            st.write(f"**Edit: {r.title}**")
+                        with st.popover("✏️ Edit"):
+                            st.write(f"**Edit Recipe: {r.title}**")
                             with st.form(key=f"inline_edit_form_{r.id}"):
                                 new_title = st.text_input("Recipe Title", value=r.title)
                                 
@@ -534,7 +628,7 @@ with tab3:
                                     height=140
                                 )
 
-                                if st.form_submit_button("Update Recipe"):
+                                if st.form_submit_button("Save Changes"):
                                     db_rec = db.query(Recipe).filter(Recipe.id == r.id).first()
                                     if db_rec:
                                         db_rec.title = new_title
@@ -563,14 +657,19 @@ with tab3:
                                         st.toast(f"Updated '{new_title}'!")
                                         st.rerun()
 
-                    with c_del:
-                        if st.button("🗑️", key=f"inline_del_btn_{r.id}", help="Delete single recipe"):
-                            db_rec = db.query(Recipe).filter(Recipe.id == r.id).first()
-                            if db_rec:
-                                db.delete(db_rec)
-                                db.commit()
-                                st.toast(f"Deleted recipe '{r.title}'")
-                                st.rerun()
+                # Dynamic Sticky Bulk Delete Header Bar
+                if checked_ids:
+                    with placeholder_bulk_bar.container():
+                        st.markdown(f"""
+                        <div class="bulk-action-bar">
+                            <span style="color: #fca5a5; font-weight: 600;">⚠️ {len(checked_ids)} recipe(s) selected for removal</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        if st.button(f"🗑️ Delete Selected Recipes ({len(checked_ids)})", type="primary", key="btn_exec_bulk_delete"):
+                            db.query(Recipe).filter(Recipe.id.in_(checked_ids)).delete(synchronize_session=False)
+                            db.commit()
+                            st.toast(f"Deleted {len(checked_ids)} recipes!")
+                            st.rerun()
 
         finally:
             db.close()
@@ -579,8 +678,8 @@ with tab3:
     # SUB-TAB 2: STREAMLINED IMPORT (EXCLUDES METADATA & INSTRUCTIONS)
     # -------------------------------------------------------------------------
     with crud_subtab2:
-        st.subheader("Add / Import Recipes (Clean Parser)")
-        st.caption("Filters out metadata (prep time, calories) and instructions, saving title + ingredients.")
+        st.subheader("Add / Import Recipes")
+        st.caption("Filters out metadata headers and instructions, saving clean mapped ingredients.")
         db = get_db()
 
         try:
