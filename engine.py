@@ -48,6 +48,13 @@ STATIC_SYNONYM_MAP = {
     "garlic": "Knoblauch"
 }
 
+DESCRIPTOR_WORDS = [
+    "picado", "picadinho", "fatiado", "ralado", "cozido", "fresco", "fresca",
+    "de", "do", "da", "dos", "das", "sem", "com", "light", "desnatado",
+    "integral", "g", "ml", "kg", "or", "and", "chopped", "diced", "sliced",
+    "grated", "fresh", "organic", "peeled", "minced"
+]
+
 CATEGORY_BASELINES = {
     "Vorrat": 1.50,
     "Molkerei": 1.20,
@@ -62,8 +69,14 @@ def get_category_baseline(category: str) -> float:
         return 1.50
     return CATEGORY_BASELINES.get(category.strip().title(), 1.50)
 
+def strip_ingredient_descriptors(raw_name: str) -> str:
+    cleaned = raw_name.lower().strip()
+    words = cleaned.split()
+    filtered_words = [w for w in words if w not in DESCRIPTOR_WORDS and not w.endswith("g") and not w.isdigit()]
+    result = " ".join(filtered_words).strip()
+    return result if result else cleaned
+
 def normalize_quantity_to_base_units(quantity: float, unit: str) -> tuple[float, str]:
-    """Standardizes grams and milliliters to kg and liters for correct unit price scaling."""
     u_lower = unit.strip().lower()
     if u_lower in ["g", "gram", "grama", "gramas", "oz"]:
         return quantity / 1000.0, "kg"
@@ -107,6 +120,10 @@ def map_ingredient_to_german_sku(raw_name: str, db: Session = None) -> str:
     if clean_raw in STATIC_SYNONYM_MAP:
         return STATIC_SYNONYM_MAP[clean_raw]
 
+    stripped_raw = strip_ingredient_descriptors(clean_raw)
+    if stripped_raw in STATIC_SYNONYM_MAP:
+        return STATIC_SYNONYM_MAP[stripped_raw]
+
     if db is not None:
         try:
             offers = db.query(Offer).all()
@@ -122,7 +139,7 @@ def map_ingredient_to_german_sku(raw_name: str, db: Session = None) -> str:
 
     return raw_name.strip().title()
 
-def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, category: str = "Vorrat", quantity: float = 1.0, unit: str = "Stück") -> dict:
+def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, category: str = "Vorrat", quantity: float = 1.0, unit: str = "Stück", **kwargs) -> dict:
     """
     Tiered Hierarchical Pricing Strategy with Unit Standardization and Sanity Price Caps.
     """
