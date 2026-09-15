@@ -20,6 +20,7 @@ from engine import (
     save_user_learned_mapping
 )
 from seed_database import seed_database, seed_recipes
+from receipt_parser import parse_and_log_receipt
 
 st.set_page_config(
     page_title="Pro-Meal | Smart Circular Deals & Weekly Meal Optimization",
@@ -71,15 +72,20 @@ def check_and_seed_on_startup():
 check_and_seed_on_startup()
 
 # -----------------------------------------------------------------------------
-# SIDEBAR TIMING TOGGLE (Feature 2)
+# FEATURE 1: WEEKLY PLAN TIMING TOGGLE (UI / STATE)
 # -----------------------------------------------------------------------------
+if "planning_week" not in st.session_state:
+    st.session_state.planning_week = "Current Week 🟢"
+
 st.sidebar.markdown("### ⚙️ Planning Parameters")
-planning_week = st.sidebar.radio(
-    "📅 Planning For:",
-    ["Current Week", "Next Week"],
-    index=0,
-    help="Select whether to evaluate active current discounts or upcoming advance Prospekt normal prices."
+st.session_state.planning_week = st.sidebar.radio(
+    "📅 Planning Target:",
+    ["Current Week 🟢", "Next Week ⏭️"],
+    index=0 if st.session_state.planning_week == "Current Week 🟢" else 1,
+    help="Toggle between active current week promotions and advance normal baseline pricing for next week."
 )
+
+planning_target = "Current Week" if "Current" in st.session_state.planning_week else "Next Week"
 
 st.markdown("""
 <style>
@@ -146,31 +152,6 @@ UNIT_MAP = {
 def normalize_unit(unit_str: str) -> str:
     cleaned = unit_str.strip().lower()
     return UNIT_MAP.get(cleaned, unit_str.strip())
-
-def parse_single_ingredient_line(line_text: str, db) -> dict | None:
-    cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line_text).strip()
-    if not cleaned_line:
-        return None
-
-    match = re.match(r"^([\d\.,/]+)?\s*([a-zA-Zçãéíóúäöüß]+)?\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
-    
-    if match:
-        qty_str, unit_str, _, name_str = match.groups()
-        qty = float(qty_str.replace(",", ".")) if qty_str else 1.0
-        unit = normalize_unit(unit_str or "Stück")
-        raw_clean_name = strip_ingredient_descriptors(name_str)
-        original_name = raw_clean_name.title()
-        german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
-
-        return {
-            "name": german_match_name,
-            "original_name": original_name,
-            "quantity": qty,
-            "unit": unit,
-            "mapped_german_item": german_match_name,
-            "generic_category": "Vorrat"
-        }
-    return None
 
 def aggregate_weekly_ingredients(selected_recipes_config):
     aggregated = {}
@@ -287,14 +268,15 @@ def calculate_cheapest_recipes(recipes, db, planning_week="Current Week", limit=
 st.markdown(f"""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
-    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369) — Mode: <b>{planning_week}</b></p>
+    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369) — Mode: <b>{st.session_state.planning_week}</b></p>
 </div>
 """, unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🏷️ Top Deals This Week",
     "📅 Weekly Meal Planner",
     "📖 Recipe Manager",
+    "🧾 Receipt Parser",
     "📈 Price History"
 ])
 
@@ -322,7 +304,7 @@ with tab1:
         db.close()
 
 with tab2:
-    st.header(f"Weekly Meal Planner & Basket Optimization ({planning_week})")
+    st.header(f"Weekly Meal Planner & Basket Optimization ({planning_target})")
     db = get_db()
     try:
         all_recipes = load_cached_recipes()
@@ -337,8 +319,8 @@ with tab2:
             st.divider()
 
             if planning_mode == "MODE 1: Auto-Generated Lowest-Cost Meal Plan":
-                st.subheader(f"⚡ Top 5 Lowest-Cost Recipes ({planning_week})")
-                top_deals = calculate_cheapest_recipes(all_recipes, db, planning_week=planning_week, limit=5)
+                st.subheader(f"⚡ Top 5 Lowest-Cost Recipes ({planning_target})")
+                top_deals = calculate_cheapest_recipes(all_recipes, db, planning_week=planning_target, limit=5)
                 auto_config = []
                 for item in top_deals:
                     rec = item["recipe"]
@@ -348,7 +330,7 @@ with tab2:
                 st.divider()
                 st.subheader("Optimized Basket Strategy")
                 agg_ingredients = aggregate_weekly_ingredients(auto_config)
-                strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db, planning_week=planning_week)
+                strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db, planning_week=planning_target)
 
                 m1, m2, m3 = st.columns(3)
                 with m1:
@@ -380,7 +362,7 @@ with tab2:
                     st.divider()
                     st.subheader("2. Basket Cost Strategy Breakdown")
                     agg_ingredients = aggregate_weekly_ingredients(selected_recipes_config)
-                    strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db, planning_week=planning_week)
+                    strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db, planning_week=planning_target)
 
                     m1, m2, m3 = st.columns(3)
                     with m1:
@@ -408,7 +390,34 @@ with tab3:
     finally:
         db.close()
 
+# -----------------------------------------------------------------------------
+# FEATURE 2: RECEIPT UPLOAD & PRICE LOGGING TAB
+# -----------------------------------------------------------------------------
 with tab4:
+    st.header("🧾 Supermarket Receipt Upload & Price Logger")
+    st.caption("Upload a receipt image or PDF to extract item prices via OCR and update your historical price database automatically.")
+    
+    uploaded_receipt = st.file_uploader("Upload Supermarket Receipt", type=["png", "jpg", "jpeg", "pdf"], key="receipt_uploader")
+    
+    if uploaded_receipt is not None:
+        st.image(uploaded_receipt, caption="Uploaded Receipt Preview", width=300)
+        if st.button("🔍 Parse Receipt & Update Prices", type="primary"):
+            db = get_db()
+            try:
+                result = parse_and_log_receipt(uploaded_receipt, db)
+                st.success(f"Successfully processed receipt from **{result['store']}**!")
+                if result["items"]:
+                    st.write("### Extracted & Logged Items:")
+                    res_df = pd.DataFrame(result["items"])
+                    st.dataframe(res_df, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("No line item prices could be automatically matched. Try uploading a clearer receipt image.")
+            except Exception as e:
+                st.error(f"Error parsing receipt: {e}")
+            finally:
+                db.close()
+
+with tab5:
     st.header("Historical Price Trends & Advance Baselines")
     db = get_db()
     try:
