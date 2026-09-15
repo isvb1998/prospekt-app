@@ -145,7 +145,8 @@ UNIT_MAP = {
     "teaspoon": "TL", "teaspoons": "TL", "tsp": "TL", "tablespoon": "EL", "tablespoons": "EL", "tbsp": "EL",
     "cup": "Tasse", "cups": "Tasse", "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg",
     "clove": "Zehe", "cloves": "Zehe", "piece": "Stück", "pieces": "Stück", "pinch": "Prise", "can": "Dose",
-    "pound": "Pfund", "pounds": "Pfund", "oz": "g", "milliliter": "ml", "milliliters": "ml", "ounce": "g", "ounces": "g"
+    "pound": "Pfund", "pounds": "Pfund", "lb": "Pfund", "lbs": "Pfund", "oz": "g", "ounce": "g", "ounces": "g",
+    "milliliter": "ml", "milliliters": "ml", "slice": "Scheibe", "slices": "Scheiben", "pack": "Packung"
 }
 
 INGREDIENT_TRANSLATION_MAP = {
@@ -171,14 +172,12 @@ INGREDIENT_TRANSLATION_MAP = {
 
 EXCLUDE_METADATA_KEYWORDS = [
     'prep time', 'servings', 'calories', 'protein', 'carbs', 'fat',
-    'nutrition', 'facts', 'total time', 'cook time', 'yield', 'prep:'
+    'nutrition', 'facts', 'total time', 'cook time', 'yield', 'prep:', 'kcal', 'min'
 ]
 
-ACTION_VERBS_REGEX = r"\b(cook|bake|preparo|simmer|mix|combine|roll|blend|mexa|misture|adicione|boil|fry|heat|serve|chop|slice|whisk|stir|pour)\b"
+INSTRUCTION_STOP_REGEX = r"^(instructions|preparo|preparação|montagem|cozimento|cooking|directions|method|finishing|serving|vorbereitung|roasting|steps|modo de preparo|fremgangsmåde|zubereitung)"
 
-INSTRUCTION_BOUNDARY_REGEX = r"^(instructions|preparo|preparação|montagem|cozimento|cooking|finishing|serving|vorbereitung|roasting|steps|modo de preparo|fremgangsmåde|zubereitung):"
-
-VALID_UNITS_REGEX = r"\b(g|gram|grams|grama|gramas|kg|kilogram|kilograms|quilo|quilos|ml|milliliter|milliliters|l|liter|tsp|teaspoon|teaspoons|tbsp|tablespoon|tablespoons|cup|cups|piece|pieces|unidade|unidades|clove|cloves|dente|dentes|pound|pounds|oz|ounce|ounces|lata|latas|pitada|pinch|tasse|zehe|dose|el|tl|stk)\b"
+MEASUREMENT_UNITS_REGEX = r"\b(gram|grams|grama|gramas|g|kg|kilogram|kilograms|quilo|quilos|milliliter|milliliters|ml|l|liter|liters|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|cup|cups|piece|pieces|unidade|unidades|clove|cloves|dente|dentes|pound|pounds|lb|lbs|oz|ounce|ounces|unit|units|slice|slices|can|cans|pinch|pack|packs|lata|latas|pitada|tasse|zehe|dose|el|tl|stk)\b"
 
 
 def normalize_unit(unit_str: str) -> str:
@@ -197,39 +196,56 @@ def translate_to_german_grocery(ingredient_raw: str) -> str:
 
 
 def clean_item_name_artifacts(name_str: str) -> str:
-    cleaned = re.sub(r"^(gram|grams|grama|gramas|g|ml|kg|tbsp|tsp|cup|cups|piece|pieces|clove|cloves|pound|pounds|oz|ounce|ounces)\s*", "", name_str, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^(gram|grams|grama|gramas|g|ml|kg|tbsp|tsp|cup|cups|piece|pieces|clove|cloves|pound|pounds|lb|lbs|oz|ounce|ounces|slice|slices|can|cans|pack|packs)\s*", "", name_str, flags=re.IGNORECASE).strip()
     return cleaned if cleaned else name_str.strip()
 
 
-def is_valid_title(line: str) -> bool:
-    """Strict Title Validator rules."""
+def is_valid_title_candidate(line: str) -> bool:
+    """Checks if a line qualifies as a valid recipe title."""
     cleaned = line.strip()
     if not cleaned or len(cleaned) > 60:
         return False
-    # Check leading symbols, numbers, checkboxes
+    # Must not start with numbers, bullets, or step prefixes
     if re.match(r"^[•\-\*\d\.\)\|\☑\☐\①\②\③]", cleaned):
         return False
     cleaned_lower = cleaned.lower()
-    # Check action verbs
-    if re.search(ACTION_VERBS_REGEX, cleaned_lower):
-        return False
-    # Check metadata keywords
+    # Must not be a metadata key or instruction header
     if any(kw in cleaned_lower for kw in EXCLUDE_METADATA_KEYWORDS):
         return False
-    # Check instruction header keywords
-    if re.search(INSTRUCTION_BOUNDARY_REGEX, cleaned_lower):
+    if re.search(INSTRUCTION_STOP_REGEX, cleaned_lower):
+        return False
+    if re.search(r"ingredients|ingredientes", cleaned_lower):
         return False
     return True
 
 
+def is_valid_ingredient_line(line: str) -> bool:
+    """Loosened check: accepts numbers, standard measurement units, or bullet points."""
+    cleaned = line.strip()
+    if not cleaned:
+        return False
+    cleaned_lower = cleaned.lower()
+    
+    # 1. Starts with a digit or fraction (e.g. 200, 1, 0.5, 1/2)
+    if re.match(r"^[\d\.,/]+", cleaned):
+        return True
+    # 2. Contains a measurement unit
+    if re.search(MEASUREMENT_UNITS_REGEX, cleaned_lower):
+        return True
+    # 3. Starts with a clean bullet character followed by text
+    if re.match(r"^[•\-\*\|]\s*[a-zA-Z]", cleaned):
+        return True
+    
+    return False
+
+
 def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
     """
-    Parses recipe text using an explicit State Machine:
-    1. Valid Title Detection (<60 chars, no verbs, no numbers)
-    2. Strict Ingredient State Boundaries (starts at 'Ingredients', stops at 'Instructions' or step numbers)
-    3. Mandatory Quantity + Unit Regex Filtering
+    Flexible Recipe Parser:
+    - Fuzzy/partial ingredient section matching
+    - Loosened ingredient validation (numbers, units, or bullets)
+    - Strict instruction cutoff
     """
-    # Pre-split multi-column lines on bullets or pipe delimiters
     raw_lines = []
     for line in raw_text.strip().split("\n"):
         tokens = re.split(r"[•\|\*\t]", line)
@@ -240,89 +256,94 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
     if not raw_lines:
         return "Untitled Recipe", []
 
-    # 1. Title Detection
+    # Identify Recipe Title (first candidate line appearing before ingredients)
     title = "Untitled Recipe"
     for line in raw_lines:
-        if is_valid_title(line):
+        if is_valid_title_candidate(line):
             title = line.lstrip("# ").strip()
             break
 
     ingredients = []
     is_in_ingredients_section = False
 
-    # 2. State Machine Loop
     for line in raw_lines:
         clean_lower = line.lower().strip()
 
-        # STATE TRANSITION: ENTRY TO INGREDIENTS
-        if re.match(r"^(ingredientes|ingredients|zutaten)$", clean_lower):
+        # 1. FLEXIBLE INGREDIENT SECTION DETECTION
+        if re.search(r'ingredients|ingredientes', clean_lower):
             is_in_ingredients_section = True
             continue
 
-        # STATE TRANSITION: EXIT / HARD STOP
+        # 2. STRICT INSTRUCTION STOP & JUNKS SKIPPING
         if is_in_ingredients_section:
-            if re.search(INSTRUCTION_BOUNDARY_REGEX, clean_lower) or \
-               re.match(r"^(\d+[\.\)]|\d+\s|☑|☐|①|②|③)", clean_lower) or \
-               re.search(r"^(instructions|preparo|preparação|montagem|cozimento|cooking|finishing|serving)$", clean_lower):
+            if re.search(INSTRUCTION_STOP_REGEX, clean_lower) or re.match(r"^(\d+[\.\)]|\d+\s|☑|☐|①|②|③)", clean_lower):
                 is_in_ingredients_section = False
                 break
 
-        # 3. REGEX INGREDIENT EXTRACTION (STRICT INSIDE SECTION)
-        if is_in_ingredients_section:
-            # Skip metadata lines
             if any(kw in clean_lower for kw in EXCLUDE_METADATA_KEYWORDS):
                 continue
-            # Skip instruction verbs
-            if re.search(ACTION_VERBS_REGEX, clean_lower):
-                continue
 
+            # Strip leading bullets, checkmarks, numbers
             cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line).strip()
             if not cleaned_line:
                 continue
 
-            # Must start with a quantity and contain a recognized unit
-            match = re.match(r"^([\d\.,/]+)\s*(" + VALID_UNITS_REGEX + r")\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
-            
-            if match:
-                qty_str, unit_str, _, name_str = match.groups()
-                # Confirm name is not an action instruction sentence
-                if re.search(ACTION_VERBS_REGEX, name_str.lower()):
-                    continue
+            # 3. LOOSENED INGREDIENT VALIDATION
+            if is_valid_ingredient_line(line):
+                match = re.match(r"^([\d\.,/]+)?\s*(" + MEASUREMENT_UNITS_REGEX + r")?\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
+                
+                if match:
+                    qty_str, unit_str, _, name_str = match.groups()
+                    qty_str = qty_str or "1"
+                    unit_str = unit_str or "Stück"
 
-                try:
-                    qty_clean = qty_str.replace(",", ".")
-                    if "/" in qty_clean:
-                        num, den = qty_clean.split("/")
-                        qty = float(num) / float(den)
-                    else:
-                        qty = float(qty_clean)
-                except ValueError:
-                    qty = 1.0
+                    try:
+                        qty_clean = qty_str.replace(",", ".")
+                        if "/" in qty_clean:
+                            num, den = qty_clean.split("/")
+                            qty = float(num) / float(den)
+                        else:
+                            qty = float(qty_clean)
+                    except ValueError:
+                        qty = 1.0
 
-                unit = normalize_unit(unit_str)
-                cleaned_name = clean_item_name_artifacts(name_str)
-                original_name = cleaned_name.title()
-                german_match_name = translate_to_german_grocery(cleaned_name)
+                    unit = normalize_unit(unit_str)
+                    cleaned_name = clean_item_name_artifacts(name_str)
+                    original_name = cleaned_name.title()
+                    german_match_name = translate_to_german_grocery(cleaned_name)
 
-                ingredients.append({
-                    "name": german_match_name,
-                    "original_name": original_name,
-                    "quantity": qty,
-                    "unit": unit
-                })
+                    ingredients.append({
+                        "name": german_match_name,
+                        "original_name": original_name,
+                        "quantity": qty,
+                        "unit": unit
+                    })
+                else:
+                    # Fallback ingredient line without strict quantity/unit match
+                    cleaned_name = clean_item_name_artifacts(cleaned_line)
+                    if len(cleaned_name) > 1:
+                        german_match_name = translate_to_german_grocery(cleaned_name)
+                        ingredients.append({
+                            "name": german_match_name,
+                            "original_name": cleaned_name.title(),
+                            "quantity": 1.0,
+                            "unit": "Stück"
+                        })
 
     return title, ingredients
 
 
 def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
     """
-    SPATIAL TWO-COLUMN PARSING ENGINE (pdfplumber)
-    Extracts text from Left and Right bounding boxes before state machine parsing.
+    SPATIAL PARSING ENGINE WITH GRACEFUL FALLBACK
+    Attempts pdfplumber spatial two-column extraction first.
+    Falls back to pypdf line reading if pdfplumber fails.
     """
     recipe_text_blocks = []
 
     if HAS_PDFPLUMBER:
         try:
+            file_stream.seek(0)
             with pdfplumber.open(file_stream) as pdf:
                 for page in pdf.pages:
                     w = page.width
@@ -341,24 +362,26 @@ def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict
                     if page_combined.strip():
                         recipe_text_blocks.append(page_combined)
         except Exception:
+            recipe_text_blocks = []
+
+    # FALLBACK ENGINE: pypdf line-by-line extraction
+    if not recipe_text_blocks:
+        try:
             file_stream.seek(0)
             reader = PdfReader(file_stream)
             for page in reader.pages:
                 text = page.extract_text()
                 if text:
                     recipe_text_blocks.append(text)
-    else:
-        reader = PdfReader(file_stream)
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                recipe_text_blocks.append(text)
+        except Exception:
+            pass
 
     parsed_batch = []
     for raw_block in recipe_text_blocks:
         t, ing = parse_raw_recipe_ingredients_only(raw_block)
         if ing:
             parsed_batch.append((t, ing))
+            
     return parsed_batch
 
 
@@ -659,7 +682,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (SPATIAL PDF PARSING & BULK ACTIONS)
+# TAB 3: RECIPE MANAGER (FLEXIBLE PDF PARSING & BULK ACTIONS)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -822,11 +845,11 @@ with tab3:
             db.close()
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 2: STREAMLINED IMPORT (SPATIAL PDF PARSING & STATE MACHINE)
+    # SUB-TAB 2: STREAMLINED IMPORT (FLEXIBLE PDF PARSER)
     # -------------------------------------------------------------------------
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
-        st.caption("pdfplumber spatial crop parsing + strict State Machine rules.")
+        st.caption("Flexible PDF layout parsing with robust ingredient line detection.")
         db = get_db()
 
         try:
@@ -847,15 +870,15 @@ with tab3:
                                 db.add(new_recipe)
                                 count += 1
                             db.commit()
-                            st.success(f"Successfully imported {count} recipes from PDF!")
+                            st.success(f"Successfully imported {count} recipe(s) from PDF!")
                             st.rerun()
                         else:
-                            st.error("Could not parse valid ingredients from PDF. Ensure text layout lists ingredients clearly.")
+                            st.error("Could not parse valid ingredients from PDF. Ensure the PDF contains text and recipe ingredient lists.")
 
             else:
                 sample_placeholder = (
                     "Bolo de Cenoura\n"
-                    "Ingredients\n"
+                    "Ingredients:\n"
                     "200 g Farinha de trigo\n"
                     "3 Stück Eier\n"
                     "200 g Açúcar\n"
@@ -874,7 +897,7 @@ with tab3:
                             st.success(f"Saved recipe ingredients: '{t}'!")
                             st.rerun()
                         else:
-                            st.warning("No valid ingredients matched. Include 'Ingredients' header and quantity + unit per line.")
+                            st.warning("No valid ingredients matched. Include an 'Ingredients' header and quantity/unit lines.")
                     else:
                         st.warning("Please paste recipe text into the box first.")
 
