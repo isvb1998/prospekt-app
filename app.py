@@ -205,7 +205,6 @@ def parse_single_ingredient_line(line_text: str, db) -> dict | None:
         raw_clean_name = strip_ingredient_descriptors(clean_item_name_artifacts(name_str))
         original_name = raw_clean_name.title()
         
-        # Invoke Learning Engine Matching
         german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
 
         return {
@@ -409,7 +408,7 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
 st.markdown("""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
-    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization with Dynamic Offer Learning Engine (Berlin 10369)</p>
+    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -429,7 +428,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # TAB 1: TOP DEALS THIS WEEK
 # -----------------------------------------------------------------------------
 with tab1:
-    st.header("Weekly Store Circular Deals (Known Market SKUs)")
+    st.header("Weekly Store Circular Deals")
     db = get_db()
     
     try:
@@ -581,7 +580,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (WITH LEARNING FEEDBACK LOOP)
+# TAB 3: RECIPE MANAGER
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -676,8 +675,7 @@ with tab3:
                                     new_ing_raw = st.text_area(
                                         "Ingredients List (Original Item, Quantity, Unit, Mapped SKU, Category)",
                                         value="\n".join(ing_lines),
-                                        height=180,
-                                        help="Editing the Mapped SKU here automatically saves to the learning feedback loop!"
+                                        height=180
                                     )
 
                                     if st.form_submit_button("Save & Train Learning Engine"):
@@ -700,7 +698,6 @@ with tab3:
                                                         
                                                         if len(parts) >= 4 and parts[3].strip():
                                                             mapped_name = parts[3].strip().title()
-                                                            # SAVE TO USER LEARNED MAPPINGS FEEDBACK LOOP
                                                             save_user_learned_mapping(raw_name, mapped_name, db)
                                                         else:
                                                             mapped_name = map_ingredient_to_german_sku(raw_name, db)
@@ -719,7 +716,7 @@ with tab3:
                                             db_rec.ingredients = updated_ingredients
                                             db.commit()
                                             st.cache_data.clear()
-                                            st.toast(f"Updated '{new_title}' and saved corrections to Learning Engine!")
+                                            st.toast(f"Updated '{new_title}' and saved corrections!")
                                             st.rerun()
 
                 if checked_ids:
@@ -749,7 +746,7 @@ with tab3:
 
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
-        st.caption("Import via Chefkoch URL or Plain Text. Newly imported ingredients are dynamically matched against active Prospekt offers and user-learned corrections.")
+        st.caption("Import via Chefkoch URL or Plain Text.")
         db = get_db()
 
         try:
@@ -772,14 +769,14 @@ with tab3:
                                 db.add(new_recipe)
                                 db.commit()
                                 st.cache_data.clear()
-                                st.success(f"Successfully scraped & imported '{title}' ({len(ingredients)} ingredients) with Dynamic Learning!")
+                                st.success(f"Successfully scraped & imported '{title}' ({len(ingredients)} ingredients)!")
                                 st.rerun()
                             else:
                                 st.warning(f"Scraped '{title}', but no valid ingredients were found.")
                         except PermissionError as pe:
                             st.error(str(pe))
                         except Exception as e:
-                            st.error(f"Chefkoch blocked the automated request. Please paste the recipe text directly using Option B. (Error: {e})")
+                            st.error(f"Chefkoch blocked request. Please paste text directly using Option B. (Error: {e})")
                     else:
                         st.warning("Please paste a valid recipe URL into the box first.")
 
@@ -802,7 +799,7 @@ with tab3:
                             db.add(new_recipe)
                             db.commit()
                             st.cache_data.clear()
-                            st.success(f"Saved recipe ingredients with Dynamic Learning: '{t}'!")
+                            st.success(f"Saved recipe ingredients: '{t}'!")
                             st.rerun()
                         else:
                             st.warning("No valid ingredients matched.")
