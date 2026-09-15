@@ -1,10 +1,7 @@
-import os
-import json
-import sqlite3
-from database import init_db, SessionLocal, Recipe
+from database import init_db, SessionLocal, Recipe, Ingredient
 
 # -----------------------------------------------------------------------------
-# SEED RECIPE DATASET (42 COMPLETE RECIPES FROM COLLECTION)
+# SEED RECIPE DATASET WITH HARDCODED NATIVE GERMAN MAPPING & CATEGORIES
 # -----------------------------------------------------------------------------
 SEED_RECIPES = [
     {
@@ -12,17 +9,17 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 10,
         "ingredients": [
-            {"quantity": 200.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Ovo", "mapped_german_item": "Eier"},
-            {"quantity": 1.0, "unit": "TL", "name": "Pastinha de alho", "mapped_german_item": "Knoblauch"},
-            {"quantity": 1.0, "unit": "TL", "name": "Fermento químico", "mapped_german_item": "Backpulver"},
-            {"quantity": 170.0, "unit": "g", "name": "Iogurte natural", "mapped_german_item": "Naturjoghurt"},
-            {"quantity": 100.0, "unit": "ml", "name": "Passata de tomate", "mapped_german_item": "Passierte Tomaten"},
-            {"quantity": 1.0, "unit": "TL", "name": "Orégano", "mapped_german_item": "Oregano"},
-            {"quantity": 1.0, "unit": "TL", "name": "Adoçante", "mapped_german_item": "Süßstoff"},
-            {"quantity": 100.0, "unit": "g", "name": "Mussarela", "mapped_german_item": "Mozzarella"},
-            {"quantity": 100.0, "unit": "g", "name": "Linguiça calabresa", "mapped_german_item": "Mettwurst"}
+            {"quantity": 200.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Ovo", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "TL", "name": "Pastinha de alho", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "TL", "name": "Fermento químico", "mapped_german_item": "Backpulver", "generic_category": "Vorrat"},
+            {"quantity": 170.0, "unit": "g", "name": "Iogurte natural", "mapped_german_item": "Naturjoghurt", "generic_category": "Molkerei"},
+            {"quantity": 100.0, "unit": "ml", "name": "Passata de tomate", "mapped_german_item": "Passierte Tomaten", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "TL", "name": "Orégano", "mapped_german_item": "Oregano", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "TL", "name": "Adoçante", "mapped_german_item": "Süßstoff", "generic_category": "Vorrat"},
+            {"quantity": 100.0, "unit": "g", "name": "Mussarela", "mapped_german_item": "Mozzarella", "generic_category": "Molkerei"},
+            {"quantity": 100.0, "unit": "g", "name": "Linguiça calabresa", "mapped_german_item": "Mettwurst / Kabanos", "generic_category": "Fleisch"}
         ]
     },
     {
@@ -30,22 +27,21 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 10,
         "ingredients": [
-            {"quantity": 500.0, "unit": "g", "name": "Self Rising Flour", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 520.0, "unit": "g", "name": "Greek Yogurt (0% Fat)", "mapped_german_item": "Naturjoghurt"},
-            {"quantity": 15.0, "unit": "g", "name": "Garlic Salt", "mapped_german_item": "Salz"},
-            {"quantity": 8.0, "unit": "g", "name": "Italian Seasoning", "mapped_german_item": "Kräuter der Provence"},
-            {"quantity": 850.0, "unit": "g", "name": "Lean Ground Beef (96/4)", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 7.0, "unit": "g", "name": "Garlic Salt", "mapped_german_item": "Salz"},
-            {"quantity": 4.0, "unit": "g", "name": "Smoked Paprika", "mapped_german_item": "Paprikapulver"},
-            {"quantity": 4.0, "unit": "g", "name": "Onion Powder", "mapped_german_item": "Zwiebelpulver"},
-            {"quantity": 150.0, "unit": "g", "name": "Diced White Onions", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 25.0, "unit": "g", "name": "Minced Pickles", "mapped_german_item": "Gewürzgurken"},
-            {"quantity": 15.0, "unit": "g", "name": "Ketchup", "mapped_german_item": "Ketchup"},
-            {"quantity": 15.0, "unit": "g", "name": "Yellow Mustard", "mapped_german_item": "Senf"},
-            {"quantity": 30.0, "unit": "g", "name": "Light Mayo", "mapped_german_item": "Mayonnaise"},
-            {"quantity": 112.0, "unit": "g", "name": "Fat Free Cheddar Cheese", "mapped_german_item": "Käse"},
-            {"quantity": 75.0, "unit": "g", "name": "Cooked Bacon", "mapped_german_item": "Bacon"},
-            {"quantity": 280.0, "unit": "g", "name": "Fat Free Mozzarella", "mapped_german_item": "Mozzarella"}
+            {"quantity": 500.0, "unit": "g", "name": "Self Rising Flour", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 520.0, "unit": "g", "name": "Greek Yogurt (0% Fat)", "mapped_german_item": "Griechischer Joghurt", "generic_category": "Molkerei"},
+            {"quantity": 15.0, "unit": "g", "name": "Garlic Salt", "mapped_german_item": "Knoblauchsalz", "generic_category": "Vorrat"},
+            {"quantity": 8.0, "unit": "g", "name": "Italian Seasoning", "mapped_german_item": "Kräuter der Provence", "generic_category": "Vorrat"},
+            {"quantity": 850.0, "unit": "g", "name": "Lean Ground Beef (96/4)", "mapped_german_item": "Rinderhackfleisch", "generic_category": "Fleisch"},
+            {"quantity": 4.0, "unit": "g", "name": "Smoked Paprika", "mapped_german_item": "Paprikapulver edelsüß/geräuchert", "generic_category": "Vorrat"},
+            {"quantity": 4.0, "unit": "g", "name": "Onion Powder", "mapped_german_item": "Zwiebelpulver", "generic_category": "Vorrat"},
+            {"quantity": 150.0, "unit": "g", "name": "Diced White Onions", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 25.0, "unit": "g", "name": "Minced Pickles", "mapped_german_item": "Gewürzgurken", "generic_category": "Feinkost"},
+            {"quantity": 15.0, "unit": "g", "name": "Ketchup", "mapped_german_item": "Ketchup", "generic_category": "Vorrat"},
+            {"quantity": 15.0, "unit": "g", "name": "Yellow Mustard", "mapped_german_item": "Senf", "generic_category": "Vorrat"},
+            {"quantity": 30.0, "unit": "g", "name": "Light Mayo", "mapped_german_item": "Mayonnaise", "generic_category": "Vorrat"},
+            {"quantity": 112.0, "unit": "g", "name": "Fat Free Cheddar Cheese", "mapped_german_item": "Cheddar", "generic_category": "Molkerei"},
+            {"quantity": 75.0, "unit": "g", "name": "Cooked Bacon", "mapped_german_item": "Bacon / Frühstücksspeck", "generic_category": "Fleisch"},
+            {"quantity": 280.0, "unit": "g", "name": "Fat Free Mozzarella", "mapped_german_item": "Mozzarella", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -53,17 +49,17 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 8,
         "ingredients": [
-            {"quantity": 1.0, "unit": "Stück", "name": "Green cabbage", "mapped_german_item": "Kohl"},
-            {"quantity": 0.5, "unit": "Pfund", "name": "Ground beef", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 0.5, "unit": "Pfund", "name": "Ground sausage/pork", "mapped_german_item": "Mettwurst"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Cooked rice", "mapped_german_item": "Reis"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Yellow onion", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Carrot", "mapped_german_item": "Möhren"},
-            {"quantity": 10.0, "unit": "Zehe", "name": "Garlic cloves", "mapped_german_item": "Knoblauch"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Eggs", "mapped_german_item": "Eier"},
-            {"quantity": 2.0, "unit": "EL", "name": "Olive oil", "mapped_german_item": "Olivenöl"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Whole peeled tomatoes", "mapped_german_item": "Gehackte Tomaten"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Fresh basil", "mapped_german_item": "Basilikum"}
+            {"quantity": 1.0, "unit": "Stück", "name": "Green cabbage", "mapped_german_item": "Weißkohl", "generic_category": "Obst & Gemüse"},
+            {"quantity": 0.5, "unit": "Pfund", "name": "Ground beef", "mapped_german_item": "Rinderhackfleisch", "generic_category": "Fleisch"},
+            {"quantity": 0.5, "unit": "Pfund", "name": "Ground sausage/pork", "mapped_german_item": "Schweinehackfleisch / Mett", "generic_category": "Fleisch"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Cooked rice", "mapped_german_item": "Reis", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "Stück", "name": "Yellow onion", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Carrot", "mapped_german_item": "Möhren", "generic_category": "Obst & Gemüse"},
+            {"quantity": 10.0, "unit": "Zehe", "name": "Garlic cloves", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 2.0, "unit": "Stück", "name": "Eggs", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 2.0, "unit": "EL", "name": "Olive oil", "mapped_german_item": "Olivenöl", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "Dose", "name": "Whole peeled tomatoes", "mapped_german_item": "Gehackte Tomaten", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Bund", "name": "Fresh basil", "mapped_german_item": "Basilikum", "generic_category": "Obst & Gemüse"}
         ]
     },
     {
@@ -71,17 +67,17 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 4,
         "ingredients": [
-            {"quantity": 1.0, "unit": "Stück", "name": "Kohl", "mapped_german_item": "Kohl"},
-            {"quantity": 500.0, "unit": "g", "name": "Hackfleisch", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 200.0, "unit": "g", "name": "Reis", "mapped_german_item": "Reis"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Zwiebel", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 2.0, "unit": "EL", "name": "Tomatenmark", "mapped_german_item": "Tomatenmark"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Knoblauch", "mapped_german_item": "Knoblauch"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Minze", "mapped_german_item": "Kräuter"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Petersilie", "mapped_german_item": "Petersilie"},
-            {"quantity": 50.0, "unit": "ml", "name": "Olivenöl", "mapped_german_item": "Olivenöl"},
-            {"quantity": 300.0, "unit": "ml", "name": "Tomatensauce", "mapped_german_item": "Passierte Tomaten"},
-            {"quantity": 200.0, "unit": "g", "name": "Joghurt", "mapped_german_item": "Naturjoghurt"}
+            {"quantity": 1.0, "unit": "Stück", "name": "Kohl", "mapped_german_item": "Weißkohl", "generic_category": "Obst & Gemüse"},
+            {"quantity": 500.0, "unit": "g", "name": "Hackfleisch", "mapped_german_item": "Hackfleisch gemischt", "generic_category": "Fleisch"},
+            {"quantity": 200.0, "unit": "g", "name": "Reis", "mapped_german_item": "Reis", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Zwiebel", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 2.0, "unit": "EL", "name": "Tomatenmark", "mapped_german_item": "Tomatenmark", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "Zehe", "name": "Knoblauch", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "Bund", "name": "Minze", "mapped_german_item": "Frische Minze", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "Bund", "name": "Petersilie", "mapped_german_item": "Petersilie", "generic_category": "Obst & Gemüse"},
+            {"quantity": 50.0, "unit": "ml", "name": "Olivenöl", "mapped_german_item": "Olivenöl", "generic_category": "Vorrat"},
+            {"quantity": 300.0, "unit": "ml", "name": "Tomatensauce", "mapped_german_item": "Passierte Tomaten", "generic_category": "Vorrat"},
+            {"quantity": 200.0, "unit": "g", "name": "Joghurt", "mapped_german_item": "Naturjoghurt", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -89,15 +85,15 @@ SEED_RECIPES = [
         "category": "Pasta",
         "servings": 4,
         "ingredients": [
-            {"quantity": 4.0, "unit": "Stück", "name": "Onions", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Red onions", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 30.0, "unit": "ml", "name": "Olive oil", "mapped_german_item": "Olivenöl"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Garlic", "mapped_german_item": "Knoblauch"},
-            {"quantity": 150.0, "unit": "g", "name": "Cream cheese", "mapped_german_item": "Frischkäse"},
-            {"quantity": 50.0, "unit": "g", "name": "Sun-dried tomatoes", "mapped_german_item": "Getrocknete Tomaten"},
-            {"quantity": 15.0, "unit": "ml", "name": "Balsamic glaze", "mapped_german_item": "Balsamico"},
-            {"quantity": 10.0, "unit": "g", "name": "Fresh parsley", "mapped_german_item": "Petersilie"},
-            {"quantity": 400.0, "unit": "g", "name": "Farfalle pasta", "mapped_german_item": "Spaghetti"}
+            {"quantity": 4.0, "unit": "Stück", "name": "Onions", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 2.0, "unit": "Stück", "name": "Red onions", "mapped_german_item": "Rote Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 30.0, "unit": "ml", "name": "Olive oil", "mapped_german_item": "Olivenöl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Garlic", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 150.0, "unit": "g", "name": "Cream cheese", "mapped_german_item": "Frischkäse", "generic_category": "Molkerei"},
+            {"quantity": 50.0, "unit": "g", "name": "Sun-dried tomatoes", "mapped_german_item": "Getrocknete Tomaten", "generic_category": "Feinkost"},
+            {"quantity": 15.0, "unit": "ml", "name": "Balsamic glaze", "mapped_german_item": "Balsamico", "generic_category": "Vorrat"},
+            {"quantity": 10.0, "unit": "g", "name": "Fresh parsley", "mapped_german_item": "Petersilie", "generic_category": "Obst & Gemüse"},
+            {"quantity": 400.0, "unit": "g", "name": "Farfalle pasta", "mapped_german_item": "Farfalle / Pasta", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -105,12 +101,12 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 50,
         "ingredients": [
-            {"quantity": 2.0, "unit": "kg", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 1.3, "unit": "kg", "name": "Margarina", "mapped_german_item": "Butter"},
-            {"quantity": 150.0, "unit": "g", "name": "Creme de cebola", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 20.0, "unit": "g", "name": "Sal", "mapped_german_item": "Salz"},
-            {"quantity": 40.0, "unit": "g", "name": "Fermento químico", "mapped_german_item": "Backpulver"},
-            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier"}
+            {"quantity": 2.0, "unit": "kg", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 1.3, "unit": "kg", "name": "Margarina", "mapped_german_item": "Margarine", "generic_category": "Molkerei"},
+            {"quantity": 150.0, "unit": "g", "name": "Creme de cebola", "mapped_german_item": "Zwiebelsuppe / Zwiebelcreme", "generic_category": "Vorrat"},
+            {"quantity": 20.0, "unit": "g", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"},
+            {"quantity": 40.0, "unit": "g", "name": "Fermento químico", "mapped_german_item": "Backpulver", "generic_category": "Vorrat"},
+            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -118,10 +114,10 @@ SEED_RECIPES = [
         "category": "Sauces",
         "servings": 10,
         "ingredients": [
-            {"quantity": 20.0, "unit": "Zehe", "name": "Garlic cloves", "mapped_german_item": "Knoblauch"},
-            {"quantity": 1.0, "unit": "TL", "name": "Salt", "mapped_german_item": "Salz"},
-            {"quantity": 100.0, "unit": "ml", "name": "Lemon juice", "mapped_german_item": "Zitronensaft"},
-            {"quantity": 250.0, "unit": "ml", "name": "Vegetable oil", "mapped_german_item": "Pflanzenöl"}
+            {"quantity": 20.0, "unit": "Zehe", "name": "Garlic cloves", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "TL", "name": "Salt", "mapped_german_item": "Salz", "generic_category": "Vorrat"},
+            {"quantity": 100.0, "unit": "ml", "name": "Lemon juice", "mapped_german_item": "Zitronensaft", "generic_category": "Obst & Gemüse"},
+            {"quantity": 250.0, "unit": "ml", "name": "Vegetable oil", "mapped_german_item": "Pflanzenöl", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -129,15 +125,15 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 2,
         "ingredients": [
-            {"quantity": 1.0, "unit": "EL", "name": "Azeite", "mapped_german_item": "Olivenöl"},
-            {"quantity": 0.5, "unit": "Stück", "name": "Cebola", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Alho", "mapped_german_item": "Knoblauch"},
-            {"quantity": 0.5, "unit": "Stück", "name": "Pimentão vermelho", "mapped_german_item": "Paprika"},
-            {"quantity": 400.0, "unit": "g", "name": "Tomate pelado", "mapped_german_item": "Gehackte Tomaten"},
-            {"quantity": 1.0, "unit": "EL", "name": "Extrato de tomate", "mapped_german_item": "Tomatenmark"},
-            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier"},
-            {"quantity": 100.0, "unit": "g", "name": "Mussarela de búfala", "mapped_german_item": "Mozzarella"},
-            {"quantity": 1.0, "unit": "EL", "name": "Salsinha", "mapped_german_item": "Petersilie"}
+            {"quantity": 1.0, "unit": "EL", "name": "Azeite", "mapped_german_item": "Olivenöl", "generic_category": "Vorrat"},
+            {"quantity": 0.5, "unit": "Stück", "name": "Cebola", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 2.0, "unit": "Zehe", "name": "Alho", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 0.5, "unit": "Stück", "name": "Pimentão vermelho", "mapped_german_item": "Paprika rot", "generic_category": "Obst & Gemüse"},
+            {"quantity": 400.0, "unit": "g", "name": "Tomate pelado", "mapped_german_item": "Gehackte Tomaten", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Extrato de tomate", "mapped_german_item": "Tomatenmark", "generic_category": "Vorrat"},
+            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 100.0, "unit": "g", "name": "Mussarela de búfala", "mapped_german_item": "Büffelmozzarella", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "EL", "name": "Salsinha", "mapped_german_item": "Petersilie", "generic_category": "Obst & Gemüse"}
         ]
     },
     {
@@ -145,11 +141,11 @@ SEED_RECIPES = [
         "category": "Desserts",
         "servings": 12,
         "ingredients": [
-            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier"},
-            {"quantity": 2.0, "unit": "Tasse", "name": "Açúcar", "mapped_german_item": "Zucker"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Chocolate 50%", "mapped_german_item": "Schokolade"},
-            {"quantity": 4.0, "unit": "EL", "name": "Manteiga", "mapped_german_item": "Butter"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"}
+            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 2.0, "unit": "Tasse", "name": "Açúcar", "mapped_german_item": "Zucker", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Chocolate 50%", "mapped_german_item": "Zartbitterschokolade", "generic_category": "Vorrat"},
+            {"quantity": 4.0, "unit": "EL", "name": "Manteiga", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -157,14 +153,14 @@ SEED_RECIPES = [
         "category": "Desserts",
         "servings": 12,
         "ingredients": [
-            {"quantity": 180.0, "unit": "g", "name": "Açúcar", "mapped_german_item": "Zucker"},
-            {"quantity": 100.0, "unit": "ml", "name": "Água", "mapped_german_item": "Wasser"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Canela em pau", "mapped_german_item": "Zimt"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Casca de limão siciliano", "mapped_german_item": "Zitrone"},
-            {"quantity": 250.0, "unit": "g", "name": "Leite integral", "mapped_german_item": "Milch"},
-            {"quantity": 30.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 5.0, "unit": "Stück", "name": "Gemas", "mapped_german_item": "Eier"},
-            {"quantity": 300.0, "unit": "g", "name": "Massa folhada", "mapped_german_item": "Blätterteig"}
+            {"quantity": 180.0, "unit": "g", "name": "Açúcar", "mapped_german_item": "Zucker", "generic_category": "Vorrat"},
+            {"quantity": 100.0, "unit": "ml", "name": "Água", "mapped_german_item": "Wasser", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Canela em pau", "mapped_german_item": "Zimtstange", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Casca de limão siciliano", "mapped_german_item": "Zitrone", "generic_category": "Obst & Gemüse"},
+            {"quantity": 250.0, "unit": "g", "name": "Leite integral", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 30.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 5.0, "unit": "Stück", "name": "Gemas", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 300.0, "unit": "g", "name": "Massa folhada", "mapped_german_item": "Blätterteig", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -172,12 +168,12 @@ SEED_RECIPES = [
         "category": "Sauces",
         "servings": 4,
         "ingredients": [
-            {"quantity": 3.0, "unit": "Zehe", "name": "Knoblauchzehen", "mapped_german_item": "Knoblauch"},
-            {"quantity": 3.0, "unit": "EL", "name": "Olivenöl", "mapped_german_item": "Olivenöl"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Zitrone (Saft)", "mapped_german_item": "Zitrone"},
-            {"quantity": 1.0, "unit": "TL", "name": "Honig", "mapped_german_item": "Honig"},
-            {"quantity": 1.0, "unit": "EL", "name": "Paprikapulver", "mapped_german_item": "Paprikapulver"},
-            {"quantity": 1.0, "unit": "EL", "name": "Salz", "mapped_german_item": "Salz"}
+            {"quantity": 3.0, "unit": "Zehe", "name": "Knoblauchzehen", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 3.0, "unit": "EL", "name": "Olivenöl", "mapped_german_item": "Olivenöl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Zitrone (Saft)", "mapped_german_item": "Zitrone", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "TL", "name": "Honig", "mapped_german_item": "Honig", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Paprikapulver", "mapped_german_item": "Paprikapulver edelsüß/geräuchert", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Salz", "mapped_german_item": "Salz", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -185,10 +181,10 @@ SEED_RECIPES = [
         "category": "Dairy & Cheese",
         "servings": 6,
         "ingredients": [
-            {"quantity": 2.5, "unit": "L", "name": "Leite integral", "mapped_german_item": "Milch"},
-            {"quantity": 0.5, "unit": "Stück", "name": "Suco de limão", "mapped_german_item": "Zitronensaft"},
-            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz"},
-            {"quantity": 1.0, "unit": "EL", "name": "Manteiga", "mapped_german_item": "Butter"}
+            {"quantity": 2.5, "unit": "L", "name": "Leite integral", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 0.5, "unit": "Stück", "name": "Suco de limão", "mapped_german_item": "Zitronensaft", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Manteiga", "mapped_german_item": "Butter", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -196,13 +192,13 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 2,
         "ingredients": [
-            {"quantity": 500.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 20.0, "unit": "g", "name": "Sal", "mapped_german_item": "Salz"},
-            {"quantity": 100.0, "unit": "ml", "name": "Óleo vegetal", "mapped_german_item": "Pflanzenöl"},
-            {"quantity": 260.0, "unit": "ml", "name": "Água", "mapped_german_item": "Wasser"},
-            {"quantity": 80.0, "unit": "g", "name": "Manteiga sem sal", "mapped_german_item": "Butter"},
-            {"quantity": 500.0, "unit": "g", "name": "Carne moída", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 100.0, "unit": "g", "name": "Cebola picada", "mapped_german_item": "Zwiebeln"}
+            {"quantity": 500.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 20.0, "unit": "g", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"},
+            {"quantity": 100.0, "unit": "ml", "name": "Óleo vegetal", "mapped_german_item": "Pflanzenöl", "generic_category": "Vorrat"},
+            {"quantity": 260.0, "unit": "ml", "name": "Água", "mapped_german_item": "Wasser", "generic_category": "Vorrat"},
+            {"quantity": 80.0, "unit": "g", "name": "Manteiga sem sal", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 500.0, "unit": "g", "name": "Carne moída", "mapped_german_item": "Hackfleisch gemischt", "generic_category": "Fleisch"},
+            {"quantity": 100.0, "unit": "g", "name": "Cebola picada", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"}
         ]
     },
     {
@@ -210,14 +206,14 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 4,
         "ingredients": [
-            {"quantity": 8.0, "unit": "Stück", "name": "Small lavash or tortillas", "mapped_german_item": "Wraps"},
-            {"quantity": 400.0, "unit": "g", "name": "Chicken breast", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Onion", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Red pepper", "mapped_german_item": "Paprika"},
-            {"quantity": 3.0, "unit": "Zehe", "name": "Garlic", "mapped_german_item": "Knoblauch"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Cream", "mapped_german_item": "Schlagsahne"},
-            {"quantity": 150.0, "unit": "g", "name": "Kashar cheese (or mozzarella)", "mapped_german_item": "Mozzarella"},
-            {"quantity": 1.0, "unit": "EL", "name": "Flour", "mapped_german_item": "Weizenmehl"}
+            {"quantity": 8.0, "unit": "Stück", "name": "Small lavash or tortillas", "mapped_german_item": "Wraps / Tortillas", "generic_category": "Vorrat"},
+            {"quantity": 400.0, "unit": "g", "name": "Chicken breast", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Onion", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Red pepper", "mapped_german_item": "Paprika rot", "generic_category": "Obst & Gemüse"},
+            {"quantity": 3.0, "unit": "Zehe", "name": "Garlic", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Cream", "mapped_german_item": "Schlagsahne", "generic_category": "Molkerei"},
+            {"quantity": 150.0, "unit": "g", "name": "Kashar cheese (or mozzarella)", "mapped_german_item": "Mozzarella / Schnittkäse", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "EL", "name": "Flour", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -225,11 +221,11 @@ SEED_RECIPES = [
         "category": "Sauces",
         "servings": 20,
         "ingredients": [
-            {"quantity": 300.0, "unit": "g", "name": "Açúcar", "mapped_german_item": "Zucker"},
-            {"quantity": 300.0, "unit": "ml", "name": "Shoyu", "mapped_german_item": "Sojasauce"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Alho", "mapped_german_item": "Knoblauch"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Gengibre", "mapped_german_item": "Ingwer"},
-            {"quantity": 0.25, "unit": "Stück", "name": "Laranja pêra", "mapped_german_item": "Orangen"}
+            {"quantity": 300.0, "unit": "g", "name": "Açúcar", "mapped_german_item": "Zucker", "generic_category": "Vorrat"},
+            {"quantity": 300.0, "unit": "ml", "name": "Shoyu", "mapped_german_item": "Sojasauce", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "Zehe", "name": "Alho", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 2.0, "unit": "Stück", "name": "Gengibre", "mapped_german_item": "Ingwer", "generic_category": "Obst & Gemüse"},
+            {"quantity": 0.25, "unit": "Stück", "name": "Laranja pêra", "mapped_german_item": "Orangen", "generic_category": "Obst & Gemüse"}
         ]
     },
     {
@@ -237,14 +233,14 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 8,
         "ingredients": [
-            {"quantity": 3.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Óleo", "mapped_german_item": "Pflanzenöl"},
-            {"quantity": 1.0, "unit": "EL", "name": "Margarina", "mapped_german_item": "Butter"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Queijo", "mapped_german_item": "Käse"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Milch"},
-            {"quantity": 3.0, "unit": "Tasse", "name": "Goma (Tapioca / Polvilho)", "mapped_german_item": "Speisestärke"},
-            {"quantity": 1.0, "unit": "EL", "name": "Fermento", "mapped_german_item": "Backpulver"},
-            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz"}
+            {"quantity": 3.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Óleo", "mapped_german_item": "Pflanzenöl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Margarina", "mapped_german_item": "Margarine", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Queijo", "mapped_german_item": "Schnittkäse / Gouda", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 3.0, "unit": "Tasse", "name": "Goma", "mapped_german_item": "Speisestärke", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Fermento", "mapped_german_item": "Backpulver", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -252,12 +248,12 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 4,
         "ingredients": [
-            {"quantity": 2.0, "unit": "Pfund", "name": "Ground beef", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 0.5, "unit": "Stück", "name": "Onion, grated", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 0.25, "unit": "Tasse", "name": "Yogurt", "mapped_german_item": "Naturjoghurt"},
-            {"quantity": 1.0, "unit": "TL", "name": "Garlic", "mapped_german_item": "Knoblauch"},
-            {"quantity": 1.0, "unit": "TL", "name": "Paprika", "mapped_german_item": "Paprikapulver"},
-            {"quantity": 1.0, "unit": "TL", "name": "Salt", "mapped_german_item": "Salz"}
+            {"quantity": 2.0, "unit": "Pfund", "name": "Ground beef", "mapped_german_item": "Rinderhackfleisch", "generic_category": "Fleisch"},
+            {"quantity": 0.5, "unit": "Stück", "name": "Onion, grated", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 0.25, "unit": "Tasse", "name": "Yogurt", "mapped_german_item": "Naturjoghurt", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "TL", "name": "Garlic", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "TL", "name": "Paprika", "mapped_german_item": "Paprikapulver edelsüß/geräuchert", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "TL", "name": "Salt", "mapped_german_item": "Salz", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -265,14 +261,14 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 10,
         "ingredients": [
-            {"quantity": 1.0, "unit": "Tasse", "name": "Água morna", "mapped_german_item": "Wasser"},
-            {"quantity": 2.0, "unit": "EL", "name": "Açúcar", "mapped_german_item": "Zucker"},
-            {"quantity": 5.0, "unit": "g", "name": "Fermento biológico seco", "mapped_german_item": "Hefe"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Ovo", "mapped_german_item": "Eier"},
-            {"quantity": 2.0, "unit": "EL", "name": "Óleo", "mapped_german_item": "Pflanzenöl"},
-            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz"},
-            {"quantity": 400.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 10.0, "unit": "Stück", "name": "Salsichas", "mapped_german_item": "Bockwurst"}
+            {"quantity": 1.0, "unit": "Tasse", "name": "Água morna", "mapped_german_item": "Wasser", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "EL", "name": "Açúcar", "mapped_german_item": "Zucker", "generic_category": "Vorrat"},
+            {"quantity": 5.0, "unit": "g", "name": "Fermento biológico seco", "mapped_german_item": "Hefe", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Ovo", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 2.0, "unit": "EL", "name": "Óleo", "mapped_german_item": "Pflanzenöl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"},
+            {"quantity": 400.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 10.0, "unit": "Stück", "name": "Salsichas", "mapped_german_item": "Bockwurst / Wiener Würstchen", "generic_category": "Fleisch"}
         ]
     },
     {
@@ -280,14 +276,14 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 1,
         "ingredients": [
-            {"quantity": 1.0, "unit": "Stück", "name": "Tortilla wrap", "mapped_german_item": "Wraps"},
-            {"quantity": 200.0, "unit": "g", "name": "Beef mince", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Burger cheese", "mapped_german_item": "Käse"},
-            {"quantity": 50.0, "unit": "g", "name": "Lettuce", "mapped_german_item": "Eisbergsalat"},
-            {"quantity": 30.0, "unit": "g", "name": "Onion", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 30.0, "unit": "g", "name": "Gherkins", "mapped_german_item": "Gewürzgurken"},
-            {"quantity": 2.0, "unit": "EL", "name": "Mayonnaise", "mapped_german_item": "Mayonnaise"},
-            {"quantity": 1.0, "unit": "TL", "name": "Mustard", "mapped_german_item": "Senf"}
+            {"quantity": 1.0, "unit": "Stück", "name": "Tortilla wrap", "mapped_german_item": "Wraps / Tortillas", "generic_category": "Vorrat"},
+            {"quantity": 200.0, "unit": "g", "name": "Beef mince", "mapped_german_item": "Rinderhackfleisch", "generic_category": "Fleisch"},
+            {"quantity": 2.0, "unit": "Scheibe", "name": "Burger cheese", "mapped_german_item": "Cheddar / Schmelzkäse", "generic_category": "Molkerei"},
+            {"quantity": 50.0, "unit": "g", "name": "Lettuce", "mapped_german_item": "Eisbergsalat", "generic_category": "Obst & Gemüse"},
+            {"quantity": 30.0, "unit": "g", "name": "Onion", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 30.0, "unit": "g", "name": "Gherkins", "mapped_german_item": "Gewürzgurken", "generic_category": "Feinkost"},
+            {"quantity": 2.0, "unit": "EL", "name": "Mayonnaise", "mapped_german_item": "Mayonnaise", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "TL", "name": "Mustard", "mapped_german_item": "Senf", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -295,15 +291,15 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 8,
         "ingredients": [
-            {"quantity": 500.0, "unit": "g", "name": "Farinha de trigo branca", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 240.0, "unit": "g", "name": "Leite morno", "mapped_german_item": "Milch"},
-            {"quantity": 30.0, "unit": "g", "name": "Mel ou açúcar", "mapped_german_item": "Honig"},
-            {"quantity": 10.0, "unit": "g", "name": "Fermento biológico seco", "mapped_german_item": "Hefe"},
-            {"quantity": 80.0, "unit": "g", "name": "Ovo", "mapped_german_item": "Eier"},
-            {"quantity": 10.0, "unit": "g", "name": "Sal", "mapped_german_item": "Salz"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Cabeça de alho", "mapped_german_item": "Knoblauch"},
-            {"quantity": 150.0, "unit": "g", "name": "Manteiga", "mapped_german_item": "Butter"},
-            {"quantity": 150.0, "unit": "g", "name": "Queijo gouda", "mapped_german_item": "Gouda"}
+            {"quantity": 500.0, "unit": "g", "name": "Farinha de trigo branca", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 240.0, "unit": "g", "name": "Leite morno", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 30.0, "unit": "g", "name": "Mel ou açúcar", "mapped_german_item": "Honig", "generic_category": "Vorrat"},
+            {"quantity": 10.0, "unit": "g", "name": "Fermento biológico seco", "mapped_german_item": "Hefe", "generic_category": "Vorrat"},
+            {"quantity": 80.0, "unit": "g", "name": "Ovo", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 10.0, "unit": "g", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Cabeça de alho", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 150.0, "unit": "g", "name": "Manteiga", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 150.0, "unit": "g", "name": "Queijo gouda", "mapped_german_item": "Gouda", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -311,14 +307,14 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 2,
         "ingredients": [
-            {"quantity": 250.0, "unit": "g", "name": "Macarrão para yakissoba", "mapped_german_item": "Spaghetti"},
-            {"quantity": 400.0, "unit": "g", "name": "Peito de frango", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Cenoura", "mapped_german_item": "Möhren"},
-            {"quantity": 4.0, "unit": "Stück", "name": "Brócolis e Couve-flor", "mapped_german_item": "Brokkoli"},
-            {"quantity": 0.5, "unit": "Stück", "name": "Repolho", "mapped_german_item": "Kohl"},
-            {"quantity": 0.75, "unit": "Tasse", "name": "Shoyu", "mapped_german_item": "Sojasauce"},
-            {"quantity": 1.0, "unit": "EL", "name": "Amido de milho", "mapped_german_item": "Speisestärke"},
-            {"quantity": 1.0, "unit": "EL", "name": "Óleo de gergelim", "mapped_german_item": "Pflanzenöl"}
+            {"quantity": 250.0, "unit": "g", "name": "Macarrão para yakissoba", "mapped_german_item": "Mienudeln / Asian Noodles", "generic_category": "Vorrat"},
+            {"quantity": 400.0, "unit": "g", "name": "Peito de frango", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Cenoura", "mapped_german_item": "Möhren", "generic_category": "Obst & Gemüse"},
+            {"quantity": 4.0, "unit": "Stück", "name": "Brócolis e Couve-flor", "mapped_german_item": "Brokkoli", "generic_category": "Obst & Gemüse"},
+            {"quantity": 0.5, "unit": "Stück", "name": "Repolho", "mapped_german_item": "Weißkohl", "generic_category": "Obst & Gemüse"},
+            {"quantity": 0.75, "unit": "Tasse", "name": "Shoyu", "mapped_german_item": "Sojasauce", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Amido de milho", "mapped_german_item": "Speisestärke", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Óleo de gergelim", "mapped_german_item": "Gergelimöl / Pflanzenöl", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -326,12 +322,12 @@ SEED_RECIPES = [
         "category": "Desserts",
         "servings": 6,
         "ingredients": [
-            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Açúcar", "mapped_german_item": "Zucker"},
-            {"quantity": 2.0, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Milch"},
-            {"quantity": 5.0, "unit": "Tasse", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 1.0, "unit": "EL", "name": "Pó royal (Fermento)", "mapped_german_item": "Backpulver"},
-            {"quantity": 1.0, "unit": "EL", "name": "Vinagre", "mapped_german_item": "Essig"}
+            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Açúcar", "mapped_german_item": "Zucker", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 5.0, "unit": "Tasse", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Pó royal (Fermento)", "mapped_german_item": "Backpulver", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "EL", "name": "Vinagre", "mapped_german_item": "Essig", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -339,14 +335,14 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 4,
         "ingredients": [
-            {"quantity": 900.0, "unit": "g", "name": "Peeled & Diced Potatoes", "mapped_german_item": "Kartoffeln"},
-            {"quantity": 900.0, "unit": "g", "name": "Diced Chicken Breast", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 1.0, "unit": "TL", "name": "Olive Oil", "mapped_german_item": "Olivenöl"},
-            {"quantity": 5.0, "unit": "Zehe", "name": "Minced Garlic Cloves", "mapped_german_item": "Knoblauch"},
-            {"quantity": 400.0, "unit": "ml", "name": "Light Evaporated Milk", "mapped_german_item": "Milch"},
-            {"quantity": 40.0, "unit": "g", "name": "Freshly Grated Parmesan Cheese", "mapped_german_item": "Parmesan"},
-            {"quantity": 130.0, "unit": "g", "name": "Light Cream Cheese", "mapped_german_item": "Frischkäse"},
-            {"quantity": 100.0, "unit": "g", "name": "Grated Mozzarella or Cheddar", "mapped_german_item": "Mozzarella"}
+            {"quantity": 900.0, "unit": "g", "name": "Peeled & Diced Potatoes", "mapped_german_item": "Kartoffeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 900.0, "unit": "g", "name": "Diced Chicken Breast", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 1.0, "unit": "TL", "name": "Olive Oil", "mapped_german_item": "Olivenöl", "generic_category": "Vorrat"},
+            {"quantity": 5.0, "unit": "Zehe", "name": "Minced Garlic Cloves", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 400.0, "unit": "ml", "name": "Light Evaporated Milk", "mapped_german_item": "Kondensmilch / Milch", "generic_category": "Molkerei"},
+            {"quantity": 40.0, "unit": "g", "name": "Freshly Grated Parmesan Cheese", "mapped_german_item": "Parmesan", "generic_category": "Molkerei"},
+            {"quantity": 130.0, "unit": "g", "name": "Light Cream Cheese", "mapped_german_item": "Frischkäse", "generic_category": "Molkerei"},
+            {"quantity": 100.0, "unit": "g", "name": "Grated Mozzarella or Cheddar", "mapped_german_item": "Mozzarella", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -354,14 +350,14 @@ SEED_RECIPES = [
         "category": "Pasta",
         "servings": 4,
         "ingredients": [
-            {"quantity": 2.0, "unit": "Tasse", "name": "All-purpose flour", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 4.0, "unit": "Stück", "name": "Eggs", "mapped_german_item": "Eier"},
-            {"quantity": 450.0, "unit": "g", "name": "Ground beef", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 0.5, "unit": "Stück", "name": "Onion", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 3.0, "unit": "Zehe", "name": "Garlic", "mapped_german_item": "Knoblauch"},
-            {"quantity": 150.0, "unit": "g", "name": "Ricotta cheese", "mapped_german_item": "Frischkäse"},
-            {"quantity": 100.0, "unit": "g", "name": "Mozzarella cheese", "mapped_german_item": "Mozzarella"},
-            {"quantity": 50.0, "unit": "g", "name": "Parmesan cheese", "mapped_german_item": "Parmesan"}
+            {"quantity": 2.0, "unit": "Tasse", "name": "All-purpose flour", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 4.0, "unit": "Stück", "name": "Eggs", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 450.0, "unit": "g", "name": "Ground beef", "mapped_german_item": "Rinderhackfleisch", "generic_category": "Fleisch"},
+            {"quantity": 0.5, "unit": "Stück", "name": "Onion", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 3.0, "unit": "Zehe", "name": "Garlic", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 150.0, "unit": "g", "name": "Ricotta cheese", "mapped_german_item": "Ricotta / Frischkäse", "generic_category": "Molkerei"},
+            {"quantity": 100.0, "unit": "g", "name": "Mozzarella cheese", "mapped_german_item": "Mozzarella", "generic_category": "Molkerei"},
+            {"quantity": 50.0, "unit": "g", "name": "Parmesan cheese", "mapped_german_item": "Parmesan", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -369,12 +365,12 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 4,
         "ingredients": [
-            {"quantity": 6.0, "unit": "Stück", "name": "Bacon", "mapped_german_item": "Bacon"},
-            {"quantity": 400.0, "unit": "g", "name": "Chicken breast", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Onion", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 500.0, "unit": "g", "name": "Gnocchi", "mapped_german_item": "Gnocchi"},
-            {"quantity": 200.0, "unit": "ml", "name": "Single cream", "mapped_german_item": "Schlagsahne"},
-            {"quantity": 75.0, "unit": "g", "name": "Red leister cheese", "mapped_german_item": "Käse"}
+            {"quantity": 6.0, "unit": "Stück", "name": "Bacon", "mapped_german_item": "Bacon / Frühstücksspeck", "generic_category": "Fleisch"},
+            {"quantity": 400.0, "unit": "g", "name": "Chicken breast", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Onion", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 500.0, "unit": "g", "name": "Gnocchi", "mapped_german_item": "Gnocchi", "generic_category": "Molkerei"},
+            {"quantity": 200.0, "unit": "ml", "name": "Single cream", "mapped_german_item": "Schlagsahne", "generic_category": "Molkerei"},
+            {"quantity": 75.0, "unit": "g", "name": "Red leister cheese", "mapped_german_item": "Schnittkäse / Cheddar", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -382,13 +378,13 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 7,
         "ingredients": [
-            {"quantity": 7.0, "unit": "Stück", "name": "Rap10 Fit (Wraps)", "mapped_german_item": "Wraps"},
-            {"quantity": 840.0, "unit": "g", "name": "Patinho moído (Carne moída)", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 100.0, "unit": "g", "name": "Alface", "mapped_german_item": "Eisbergsalat"},
-            {"quantity": 7.0, "unit": "Stück", "name": "Queijo light", "mapped_german_item": "Käse"},
-            {"quantity": 3.5, "unit": "Tasse", "name": "Iogurte desnatado", "mapped_german_item": "Naturjoghurt"},
-            {"quantity": 7.0, "unit": "TL", "name": "Mostarda", "mapped_german_item": "Senf"},
-            {"quantity": 7.0, "unit": "TL", "name": "Ketchup", "mapped_german_item": "Ketchup"}
+            {"quantity": 7.0, "unit": "Stück", "name": "Rap10 Fit (Wraps)", "mapped_german_item": "Wraps / Tortillas", "generic_category": "Vorrat"},
+            {"quantity": 840.0, "unit": "g", "name": "Patinho moído (Carne moída)", "mapped_german_item": "Rinderhackfleisch", "generic_category": "Fleisch"},
+            {"quantity": 100.0, "unit": "g", "name": "Alface", "mapped_german_item": "Eisbergsalat", "generic_category": "Obst & Gemüse"},
+            {"quantity": 7.0, "unit": "Scheibe", "name": "Queijo light", "mapped_german_item": "Schmelzkäse / Cheddar", "generic_category": "Molkerei"},
+            {"quantity": 3.5, "unit": "Tasse", "name": "Iogurte desnatado", "mapped_german_item": "Naturjoghurt", "generic_category": "Molkerei"},
+            {"quantity": 7.0, "unit": "TL", "name": "Mostarda", "mapped_german_item": "Senf", "generic_category": "Vorrat"},
+            {"quantity": 7.0, "unit": "TL", "name": "Ketchup", "mapped_german_item": "Ketchup", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -396,9 +392,9 @@ SEED_RECIPES = [
         "category": "Dairy & Cheese",
         "servings": 10,
         "ingredients": [
-            {"quantity": 5.0, "unit": "L", "name": "Leite pasteurizado tipo A", "mapped_german_item": "Milch"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Coagulante", "mapped_german_item": "Lab"},
-            {"quantity": 2.0, "unit": "EL", "name": "Sal", "mapped_german_item": "Salz"}
+            {"quantity": 5.0, "unit": "L", "name": "Leite pasteurizado tipo A", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Coagulante", "mapped_german_item": "Lab / Käseferment", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "EL", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -406,11 +402,11 @@ SEED_RECIPES = [
         "category": "Dairy & Cheese",
         "servings": 4,
         "ingredients": [
-            {"quantity": 1.0, "unit": "L", "name": "Leite integral", "mapped_german_item": "Milch"},
-            {"quantity": 4.0, "unit": "EL", "name": "Vinagre ou suco de limão", "mapped_german_item": "Essig"},
-            {"quantity": 0.5, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Milch"},
-            {"quantity": 2.0, "unit": "EL", "name": "Manteiga", "mapped_german_item": "Butter"},
-            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz"}
+            {"quantity": 1.0, "unit": "L", "name": "Leite integral", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 4.0, "unit": "EL", "name": "Vinagre ou suco de limão", "mapped_german_item": "Essig / Zitronensaft", "generic_category": "Vorrat"},
+            {"quantity": 0.5, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 2.0, "unit": "EL", "name": "Manteiga", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -418,14 +414,14 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 15,
         "ingredients": [
-            {"quantity": 10.0, "unit": "oz", "name": "Ground pork", "mapped_german_item": "Hackfleisch"},
-            {"quantity": 5.0, "unit": "oz", "name": "Shrimp (minced)", "mapped_german_item": "Garnelen"},
-            {"quantity": 14.0, "unit": "Stück", "name": "Rice paper", "mapped_german_item": "Reispapier"},
-            {"quantity": 0.75, "unit": "Tasse", "name": "Green onion", "mapped_german_item": "Lauchzwiebeln"},
-            {"quantity": 8.0, "unit": "Zehe", "name": "Garlic", "mapped_german_item": "Knoblauch"},
-            {"quantity": 2.0, "unit": "EL", "name": "Ginger", "mapped_german_item": "Ingwer"},
-            {"quantity": 1.5, "unit": "EL", "name": "Soy sauce", "mapped_german_item": "Sojasauce"},
-            {"quantity": 1.25, "unit": "EL", "name": "Sesame oil", "mapped_german_item": "Pflanzenöl"}
+            {"quantity": 10.0, "unit": "oz", "name": "Ground pork", "mapped_german_item": "Schweinehackfleisch", "generic_category": "Fleisch"},
+            {"quantity": 5.0, "unit": "oz", "name": "Shrimp (minced)", "mapped_german_item": "Garnelen", "generic_category": "Feinkost"},
+            {"quantity": 14.0, "unit": "Stück", "name": "Rice paper", "mapped_german_item": "Reispapier", "generic_category": "Vorrat"},
+            {"quantity": 0.75, "unit": "Tasse", "name": "Green onion", "mapped_german_item": "Lauchzwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 8.0, "unit": "Zehe", "name": "Garlic", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 2.0, "unit": "EL", "name": "Ginger", "mapped_german_item": "Ingwer", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.5, "unit": "EL", "name": "Soy sauce", "mapped_german_item": "Sojasauce", "generic_category": "Vorrat"},
+            {"quantity": 1.25, "unit": "EL", "name": "Sesame oil", "mapped_german_item": "Pflanzenöl", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -433,13 +429,13 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 3,
         "ingredients": [
-            {"quantity": 300.0, "unit": "g", "name": "Chicken breast", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 3.0, "unit": "Stück", "name": "Wraps", "mapped_german_item": "Wraps"},
-            {"quantity": 2.0, "unit": "EL", "name": "Low-fat cream cheese", "mapped_german_item": "Frischkäse"},
-            {"quantity": 50.0, "unit": "g", "name": "Low-fat mozzarella", "mapped_german_item": "Mozzarella"},
-            {"quantity": 2.0, "unit": "EL", "name": "Parmesan cheese", "mapped_german_item": "Parmesan"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Spinach", "mapped_german_item": "Spinat"},
-            {"quantity": 3.0, "unit": "EL", "name": "Skimmed milk", "mapped_german_item": "Milch"}
+            {"quantity": 300.0, "unit": "g", "name": "Chicken breast", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 3.0, "unit": "Stück", "name": "Wraps", "mapped_german_item": "Wraps / Tortillas", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "EL", "name": "Low-fat cream cheese", "mapped_german_item": "Frischkäse", "generic_category": "Molkerei"},
+            {"quantity": 50.0, "unit": "g", "name": "Low-fat mozzarella", "mapped_german_item": "Mozzarella", "generic_category": "Molkerei"},
+            {"quantity": 2.0, "unit": "EL", "name": "Parmesan cheese", "mapped_german_item": "Parmesan", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Spinach", "mapped_german_item": "Spinat", "generic_category": "Obst & Gemüse"},
+            {"quantity": 3.0, "unit": "EL", "name": "Skimmed milk", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -447,11 +443,11 @@ SEED_RECIPES = [
         "category": "Desserts",
         "servings": 10,
         "ingredients": [
-            {"quantity": 250.0, "unit": "g", "name": "Manteiga ou margarina", "mapped_german_item": "Butter"},
-            {"quantity": 250.0, "unit": "g", "name": "Açúcar", "mapped_german_item": "Zucker"},
-            {"quantity": 5.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier"},
-            {"quantity": 250.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 300.0, "unit": "g", "name": "Goiabada para rechear", "mapped_german_item": "Marmelade"}
+            {"quantity": 250.0, "unit": "g", "name": "Manteiga ou margarina", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 250.0, "unit": "g", "name": "Açúcar", "mapped_german_item": "Zucker", "generic_category": "Vorrat"},
+            {"quantity": 5.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 250.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 300.0, "unit": "g", "name": "Goiabada para rechear", "mapped_german_item": "Fruchtaufstrich / Marmelade", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -459,14 +455,14 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 15,
         "ingredients": [
-            {"quantity": 3.0, "unit": "Stück", "name": "Chicken Breasts (Diced)", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Puff Pastry Sheets", "mapped_german_item": "Blätterteig"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Large Onion", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 5.0, "unit": "Zehe", "name": "Garlic Cloves", "mapped_german_item": "Knoblauch"},
-            {"quantity": 100.0, "unit": "g", "name": "Baby Plum Tomatoes", "mapped_german_item": "Tomaten"},
-            {"quantity": 3.0, "unit": "EL", "name": "Tomato Puree", "mapped_german_item": "Tomatenmark"},
-            {"quantity": 100.0, "unit": "ml", "name": "Double Cream", "mapped_german_item": "Schlagsahne"},
-            {"quantity": 4.0, "unit": "EL", "name": "Butter", "mapped_german_item": "Butter"}
+            {"quantity": 3.0, "unit": "Stück", "name": "Chicken Breasts (Diced)", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 2.0, "unit": "Stück", "name": "Puff Pastry Sheets", "mapped_german_item": "Blätterteig", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Large Onion", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 5.0, "unit": "Zehe", "name": "Garlic Cloves", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"},
+            {"quantity": 100.0, "unit": "g", "name": "Baby Plum Tomatoes", "mapped_german_item": "Tomaten", "generic_category": "Obst & Gemüse"},
+            {"quantity": 3.0, "unit": "EL", "name": "Tomato Puree", "mapped_german_item": "Tomatenmark", "generic_category": "Vorrat"},
+            {"quantity": 100.0, "unit": "ml", "name": "Double Cream", "mapped_german_item": "Schlagsahne", "generic_category": "Molkerei"},
+            {"quantity": 4.0, "unit": "EL", "name": "Butter", "mapped_german_item": "Butter", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -474,14 +470,14 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 12,
         "ingredients": [
-            {"quantity": 2.0, "unit": "Tasse", "name": "Água", "mapped_german_item": "Wasser"},
-            {"quantity": 2.0, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Milch"},
-            {"quantity": 2.0, "unit": "EL", "name": "Margarina", "mapped_german_item": "Butter"},
-            {"quantity": 3.0, "unit": "Tasse", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Queijo picado", "mapped_german_item": "Käse"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Presunto picado", "mapped_german_item": "Kochschinken"},
-            {"quantity": 2.0, "unit": "Tasse", "name": "Farinha de rosca", "mapped_german_item": "Paniermehl"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Ovo", "mapped_german_item": "Eier"}
+            {"quantity": 2.0, "unit": "Tasse", "name": "Água", "mapped_german_item": "Wasser", "generic_category": "Vorrat"},
+            {"quantity": 2.0, "unit": "Tasse", "name": "Leite", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 2.0, "unit": "EL", "name": "Margarina", "mapped_german_item": "Margarine", "generic_category": "Molkerei"},
+            {"quantity": 3.0, "unit": "Tasse", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Queijo picado", "mapped_german_item": "Gouda / Schnittkäse", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Presunto picado", "mapped_german_item": "Kochschinken", "generic_category": "Fleisch"},
+            {"quantity": 2.0, "unit": "Tasse", "name": "Farinha de rosca", "mapped_german_item": "Paniermehl", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Ovo", "mapped_german_item": "Eier", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -489,9 +485,9 @@ SEED_RECIPES = [
         "category": "Pasta",
         "servings": 2,
         "ingredients": [
-            {"quantity": 200.0, "unit": "g", "name": "Fettuccine", "mapped_german_item": "Spaghetti"},
-            {"quantity": 70.0, "unit": "g", "name": "Butter", "mapped_german_item": "Butter"},
-            {"quantity": 150.0, "unit": "g", "name": "Parmigiano Reggiano", "mapped_german_item": "Parmesan"}
+            {"quantity": 200.0, "unit": "g", "name": "Fettuccine", "mapped_german_item": "Fettuccine / Pasta", "generic_category": "Vorrat"},
+            {"quantity": 70.0, "unit": "g", "name": "Butter", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 150.0, "unit": "g", "name": "Parmigiano Reggiano", "mapped_german_item": "Parmesan", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -499,13 +495,13 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 8,
         "ingredients": [
-            {"quantity": 1.0, "unit": "Pfund", "name": "Lasagna sheets", "mapped_german_item": "Lasagneplatten"},
-            {"quantity": 1.5, "unit": "Pfund", "name": "Chicken breast, cubed", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 20.0, "unit": "oz", "name": "Mozzarella, freshly grated", "mapped_german_item": "Mozzarella"},
-            {"quantity": 0.33, "unit": "Tasse", "name": "Ricotta", "mapped_german_item": "Frischkäse"},
-            {"quantity": 4.0, "unit": "Tasse", "name": "Whole milk", "mapped_german_item": "Milch"},
-            {"quantity": 5.0, "unit": "EL", "name": "Unsalted butter", "mapped_german_item": "Butter"},
-            {"quantity": 5.0, "unit": "EL", "name": "All-purpose flour", "mapped_german_item": "Weizenmehl"}
+            {"quantity": 1.0, "unit": "Pfund", "name": "Lasagna sheets", "mapped_german_item": "Lasagneplatten", "generic_category": "Vorrat"},
+            {"quantity": 1.5, "unit": "Pfund", "name": "Chicken breast, cubed", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 20.0, "unit": "oz", "name": "Mozzarella, freshly grated", "mapped_german_item": "Mozzarella", "generic_category": "Molkerei"},
+            {"quantity": 0.33, "unit": "Tasse", "name": "Ricotta", "mapped_german_item": "Ricotta / Frischkäse", "generic_category": "Molkerei"},
+            {"quantity": 4.0, "unit": "Tasse", "name": "Whole milk", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 5.0, "unit": "EL", "name": "Unsalted butter", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 5.0, "unit": "EL", "name": "All-purpose flour", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -513,13 +509,13 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 4,
         "ingredients": [
-            {"quantity": 100.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 150.0, "unit": "ml", "name": "Água", "mapped_german_item": "Wasser"},
-            {"quantity": 250.0, "unit": "g", "name": "Frango desfiado", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 2.0, "unit": "Stück", "name": "Cenouas", "mapped_german_item": "Möhren"},
-            {"quantity": 0.25, "unit": "Stück", "name": "Repolho", "mapped_german_item": "Kohl"},
-            {"quantity": 1.0, "unit": "Stück", "name": "Cebola", "mapped_german_item": "Zwiebeln"},
-            {"quantity": 4.0, "unit": "Stück", "name": "Alho", "mapped_german_item": "Knoblauch"}
+            {"quantity": 100.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 150.0, "unit": "ml", "name": "Água", "mapped_german_item": "Wasser", "generic_category": "Vorrat"},
+            {"quantity": 250.0, "unit": "g", "name": "Frango desfiado", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 2.0, "unit": "Stück", "name": "Cenouras", "mapped_german_item": "Möhren", "generic_category": "Obst & Gemüse"},
+            {"quantity": 0.25, "unit": "Stück", "name": "Repolho", "mapped_german_item": "Weißkohl", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "Stück", "name": "Cebola", "mapped_german_item": "Zwiebeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 4.0, "unit": "Zehe", "name": "Alho", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"}
         ]
     },
     {
@@ -527,10 +523,10 @@ SEED_RECIPES = [
         "category": "Pasta",
         "servings": 7,
         "ingredients": [
-            {"quantity": 1.0, "unit": "kg", "name": "Batata inglesa", "mapped_german_item": "Kartoffeln"},
-            {"quantity": 350.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 4.0, "unit": "Stück", "name": "Gemas", "mapped_german_item": "Eier"},
-            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz"}
+            {"quantity": 1.0, "unit": "kg", "name": "Batata inglesa", "mapped_german_item": "Kartoffeln", "generic_category": "Obst & Gemüse"},
+            {"quantity": 350.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 4.0, "unit": "Stück", "name": "Gemas", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "TL", "name": "Sal", "mapped_german_item": "Salz", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -538,11 +534,11 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 4,
         "ingredients": [
-            {"quantity": 400.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 550.0, "unit": "ml", "name": "Água gelada", "mapped_german_item": "Wasser"},
-            {"quantity": 300.0, "unit": "g", "name": "Vegetais picadinhos", "mapped_german_item": "Möhren"},
-            {"quantity": 1.0, "unit": "L", "name": "Óleo para fritar", "mapped_german_item": "Pflanzenöl"},
-            {"quantity": 100.0, "unit": "ml", "name": "Shoyu", "mapped_german_item": "Sojasauce"}
+            {"quantity": 400.0, "unit": "g", "name": "Farinha de trigo", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 550.0, "unit": "ml", "name": "Água gelada", "mapped_german_item": "Wasser", "generic_category": "Vorrat"},
+            {"quantity": 300.0, "unit": "g", "name": "Vegetais picadinhos", "mapped_german_item": "Möhren / Gemüse", "generic_category": "Obst & Gemüse"},
+            {"quantity": 1.0, "unit": "L", "name": "Óleo para fritar", "mapped_german_item": "Pflanzenöl", "generic_category": "Vorrat"},
+            {"quantity": 100.0, "unit": "ml", "name": "Shoyu", "mapped_german_item": "Sojasauce", "generic_category": "Vorrat"}
         ]
     },
     {
@@ -550,10 +546,10 @@ SEED_RECIPES = [
         "category": "Snacks",
         "servings": 4,
         "ingredients": [
-            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier"},
-            {"quantity": 1.5, "unit": "Tasse", "name": "Polvilho doce ou tapioca", "mapped_german_item": "Speisestärke"},
-            {"quantity": 1.0, "unit": "Tasse", "name": "Muçarela ralada", "mapped_german_item": "Mozzarella"},
-            {"quantity": 1.125, "unit": "Tasse", "name": "Parmesão ralado", "mapped_german_item": "Parmesan"}
+            {"quantity": 4.0, "unit": "Stück", "name": "Ovos", "mapped_german_item": "Eier", "generic_category": "Molkerei"},
+            {"quantity": 1.5, "unit": "Tasse", "name": "Polvilho doce ou tapioca", "mapped_german_item": "Speisestärke / Tapioka", "generic_category": "Vorrat"},
+            {"quantity": 1.0, "unit": "Tasse", "name": "Muçarela ralada", "mapped_german_item": "Mozzarella", "generic_category": "Molkerei"},
+            {"quantity": 1.125, "unit": "Tasse", "name": "Parmesão ralado", "mapped_german_item": "Parmesan", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -561,11 +557,11 @@ SEED_RECIPES = [
         "category": "Dairy & Cheese",
         "servings": 8,
         "ingredients": [
-            {"quantity": 1.0, "unit": "L", "name": "Whole milk", "mapped_german_item": "Milch"},
-            {"quantity": 3.0, "unit": "EL", "name": "White vinegar or lemon juice", "mapped_german_item": "Essig"},
-            {"quantity": 275.0, "unit": "ml", "name": "Double cream", "mapped_german_item": "Schlagsahne"},
-            {"quantity": 1.0, "unit": "EL", "name": "Salted butter", "mapped_german_item": "Butter"},
-            {"quantity": 100.0, "unit": "g", "name": "Mozzarella, shredded", "mapped_german_item": "Mozzarella"}
+            {"quantity": 1.0, "unit": "L", "name": "Whole milk", "mapped_german_item": "Vollmilch", "generic_category": "Molkerei"},
+            {"quantity": 3.0, "unit": "EL", "name": "White vinegar or lemon juice", "mapped_german_item": "Essig / Zitronensaft", "generic_category": "Vorrat"},
+            {"quantity": 275.0, "unit": "ml", "name": "Double cream", "mapped_german_item": "Schlagsahne", "generic_category": "Molkerei"},
+            {"quantity": 1.0, "unit": "EL", "name": "Salted butter", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 100.0, "unit": "g", "name": "Mozzarella, shredded", "mapped_german_item": "Schmelzkäse / Frischkäse", "generic_category": "Molkerei"}
         ]
     },
     {
@@ -573,12 +569,12 @@ SEED_RECIPES = [
         "category": "Bread",
         "servings": 4,
         "ingredients": [
-            {"quantity": 2.0, "unit": "Tasse", "name": "Flour", "mapped_german_item": "Weizenmehl"},
-            {"quantity": 0.25, "unit": "Tasse", "name": "Yogurt", "mapped_german_item": "Naturjoghurt"},
-            {"quantity": 5.0, "unit": "EL", "name": "Melted butter", "mapped_german_item": "Butter"},
-            {"quantity": 8.0, "unit": "g", "name": "Quick rise yeast", "mapped_german_item": "Hefe"},
-            {"quantity": 0.5, "unit": "Tasse", "name": "Shredded cheese", "mapped_german_item": "Käse"},
-            {"quantity": 2.0, "unit": "EL", "name": "Garlic", "mapped_german_item": "Knoblauch"}
+            {"quantity": 2.0, "unit": "Tasse", "name": "Flour", "mapped_german_item": "Weizenmehl", "generic_category": "Vorrat"},
+            {"quantity": 0.25, "unit": "Tasse", "name": "Yogurt", "mapped_german_item": "Naturjoghurt", "generic_category": "Molkerei"},
+            {"quantity": 5.0, "unit": "EL", "name": "Melted butter", "mapped_german_item": "Butter", "generic_category": "Molkerei"},
+            {"quantity": 8.0, "unit": "g", "name": "Quick rise yeast", "mapped_german_item": "Hefe", "generic_category": "Vorrat"},
+            {"quantity": 0.5, "unit": "Tasse", "name": "Shredded cheese", "mapped_german_item": "Gouda / Schnittkäse", "generic_category": "Molkerei"},
+            {"quantity": 2.0, "unit": "EL", "name": "Garlic", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"}
         ]
     },
     {
@@ -586,21 +582,21 @@ SEED_RECIPES = [
         "category": "Main Course",
         "servings": 2,
         "ingredients": [
-            {"quantity": 1.0, "unit": "Pfund", "name": "Chicken thighs", "mapped_german_item": "Hähnchenbrustfilet"},
-            {"quantity": 2.0, "unit": "EL", "name": "Cornstarch", "mapped_german_item": "Speisestärke"},
-            {"quantity": 3.0, "unit": "EL", "name": "Honey", "mapped_german_item": "Honig"},
-            {"quantity": 1.5, "unit": "EL", "name": "Low sodium soy sauce", "mapped_german_item": "Sojasauce"},
-            {"quantity": 3.0, "unit": "Zehe", "name": "Garlic cloves, minced", "mapped_german_item": "Knoblauch"}
+            {"quantity": 1.0, "unit": "Pfund", "name": "Chicken thighs", "mapped_german_item": "Hähnchenbrustfilet", "generic_category": "Fleisch"},
+            {"quantity": 2.0, "unit": "EL", "name": "Cornstarch", "mapped_german_item": "Speisestärke", "generic_category": "Vorrat"},
+            {"quantity": 3.0, "unit": "EL", "name": "Honey", "mapped_german_item": "Honig", "generic_category": "Vorrat"},
+            {"quantity": 1.5, "unit": "EL", "name": "Low sodium soy sauce", "mapped_german_item": "Sojasauce", "generic_category": "Vorrat"},
+            {"quantity": 3.0, "unit": "Zehe", "name": "Garlic cloves, minced", "mapped_german_item": "Knoblauch", "generic_category": "Obst & Gemüse"}
         ]
     }
 ]
 
+
 # -----------------------------------------------------------------------------
 # DATABASE SEEDER EXECUTION LOGIC
 # -----------------------------------------------------------------------------
-
 def seed_database():
-    print("Initializing Database Schema...")
+    """Populates SQLite database directly with hardcoded German ingredient mappings."""
     init_db()
     
     db = SessionLocal()
@@ -609,7 +605,6 @@ def seed_database():
 
     try:
         for rec_data in SEED_RECIPES:
-            # Check for existing title (case-insensitive)
             existing = db.query(Recipe).filter(
                 Recipe.title.collate("NOCASE") == rec_data["title"]
             ).first()
@@ -618,23 +613,36 @@ def seed_database():
                 skipped_count += 1
                 continue
 
-            # Format ingredients structure compatible with Pro-Meal app logic
             formatted_ingredients = [
                 {
                     "name": item["mapped_german_item"],
                     "original_name": item["name"],
                     "quantity": float(item["quantity"]),
-                    "unit": item["unit"]
+                    "unit": item["unit"],
+                    "mapped_german_item": item["mapped_german_item"],
+                    "generic_category": item.get("generic_category", "Vorrat")
                 }
                 for item in rec_data["ingredients"]
             ]
 
             new_recipe = Recipe(
                 title=rec_data["title"],
-                instructions=""  # Exclude cooking instructions as per requirement
+                category=rec_data.get("category", "Main Course"),
+                servings=rec_data.get("servings", 1),
+                instructions="",
+                ingredients=formatted_ingredients
             )
-            new_recipe.ingredients = formatted_ingredients
-            
+
+            for item in rec_data["ingredients"]:
+                ing_obj = Ingredient(
+                    name=item["name"],
+                    quantity=float(item["quantity"]),
+                    unit=item["unit"],
+                    mapped_german_item=item["mapped_german_item"],
+                    generic_category=item.get("generic_category", "Vorrat")
+                )
+                new_recipe.ingredient_objects.append(ing_obj)
+
             db.add(new_recipe)
             inserted_count += 1
 
