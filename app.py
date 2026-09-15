@@ -13,12 +13,9 @@ except ImportError:
 
 from database import init_db, SessionLocal, Offer, Recipe, Ingredient, PriceHistory, UserLearnedMapping
 from scraper import run_scraper
-from engine import find_best_ingredient_price, map_ingredient_to_german_sku, strip_ingredient_descriptors, save_user_learned_mapping
+from engine import find_best_ingredient_price, map_ingredient_to_german_sku, strip_ingredient_descriptors if 'strip_ingredient_descriptors' in dir() else lambda x: x, save_user_learned_mapping
 from seed_database import seed_database, seed_recipes
 
-# -----------------------------------------------------------------------------
-# 1. PAGE CONFIG & DATABASE SETUP
-# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Pro-Meal | Smart Circular Deals & Weekly Meal Optimization",
     page_icon="🥗",
@@ -68,10 +65,6 @@ def check_and_seed_on_startup():
 
 check_and_seed_on_startup()
 
-
-# -----------------------------------------------------------------------------
-# 2. CUSTOM CSS STYLING
-# -----------------------------------------------------------------------------
 st.markdown("""
 <style>
     .main {
@@ -137,55 +130,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-# -----------------------------------------------------------------------------
-# 3. PARSING ENGINE WITH LEARNING HOOKS
-# -----------------------------------------------------------------------------
 UNIT_MAP = {
     "colher de chá": "TL", "colheres de chá": "TL", "colher de sopa": "EL", "colheres de sopa": "EL",
     "xícara": "Tasse", "xícaras": "Tasse", "grama": "g", "gramas": "g", "quilo": "kg", "quilos": "kg",
     "dente": "Zehe", "dentes": "Zehe", "unidade": "Stück", "unidades": "Stück", "lata": "Dose", "latas": "Dose",
     "pitada": "Prise", "ml": "ml", "g": "g", "kg": "kg", "l": "L",
-    "teskefuld": "TL", "spiseskefuld": "EL", "kop": "Tasse", "stk": "Stück", "stk.": "Stück", "fed": "Zehe",
-    "teaspoon": "TL", "teaspoons": "TL", "tsp": "TL", "tablespoon": "EL", "tablespoons": "EL", "tbsp": "EL",
-    "cup": "Tasse", "cups": "Tasse", "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg",
-    "clove": "Zehe", "cloves": "Zehe", "piece": "Stück", "pieces": "Stück", "pinch": "Prise", "can": "Dose",
-    "pound": "Pfund", "pounds": "Pfund", "lb": "Pfund", "lbs": "Pfund", "oz": "g", "ounce": "g", "ounces": "g",
-    "milliliter": "ml", "milliliters": "ml", "slice": "Scheibe", "slices": "Scheiben", "pack": "Packung",
     "teelöffel": "TL", "esslöffel": "EL", "zehe": "Zehe", "zehen": "Zehe", "stück": "Stück", "dose": "Dose",
     "dosen": "Dose", "prise": "Prise", "prisen": "Prise", "packung": "Packung", "packungen": "Packung"
 }
 
-EXCLUDE_METADATA_KEYWORDS = [
-    'prep time', 'servings', 'calories', 'protein', 'carbs', 'fat',
-    'nutrition', 'facts', 'total time', 'cook time', 'yield', 'prep:', 'kcal', 'min',
-    'zubereitung', 'zuberitung', 'schwierigkeitsgrad', 'arbeitszeit'
-]
-
-INSTRUCTION_STOP_REGEX = r"^(instructions|preparo|preparação|montagem|cozimento|cooking|directions|method|finishing|serving|vorbereitung|roasting|steps|modo de preparo|fremgangsmåde|zubereitung)"
-MEASUREMENT_UNITS_REGEX = r"\b(gram|grams|grama|gramas|g|kg|kilogram|kilograms|quilo|quilos|milliliter|milliliters|ml|l|liter|liters|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|cup|cups|piece|pieces|unidade|unidades|clove|cloves|dente|dentes|pound|pounds|lb|lbs|oz|ounce|ounces|unit|units|slice|slices|can|cans|pinch|pack|packs|lata|latas|pitada|tasse|zehe|zehen|dose|dosen|el|tl|stk|stück|prise|prisen|packung|packungen)\b"
-
-
 def normalize_unit(unit_str: str) -> str:
     cleaned = unit_str.strip().lower()
     return UNIT_MAP.get(cleaned, unit_str.strip())
-
-
-def clean_item_name_artifacts(name_str: str) -> str:
-    cleaned = re.sub(r"^(gram|grams|grama|gramas|g|ml|kg|tbsp|tsp|cup|cups|piece|pieces|clove|cloves|pound|pounds|lb|lbs|oz|ounce|ounces|slice|slices|can|cans|pack|packs)\s*", "", name_str, flags=re.IGNORECASE).strip()
-    return cleaned if cleaned else name_str.strip()
-
 
 def parse_single_ingredient_line(line_text: str, db) -> dict | None:
     cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line_text).strip()
     if not cleaned_line:
         return None
 
-    cleaned_lower = cleaned_line.lower()
-    if any(kw in cleaned_lower for kw in EXCLUDE_METADATA_KEYWORDS):
-        return None
-
-    match = re.match(r"^([\d\.,/]+)?\s*(" + MEASUREMENT_UNITS_REGEX + r")?\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
+    match = re.match(r"^([\d\.,/]+)?\s*([a-zA-Zçãéíóúäöüß]+)?\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
     
     if match:
         qty_str, unit_str, _, name_str = match.groups()
@@ -203,7 +166,7 @@ def parse_single_ingredient_line(line_text: str, db) -> dict | None:
             qty = 1.0
 
         unit = normalize_unit(unit_str)
-        raw_clean_name = strip_ingredient_descriptors(clean_item_name_artifacts(name_str))
+        raw_clean_name = name_str.strip().lower()
         original_name = raw_clean_name.title()
         
         german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
@@ -216,20 +179,7 @@ def parse_single_ingredient_line(line_text: str, db) -> dict | None:
             "mapped_german_item": german_match_name,
             "generic_category": "Vorrat"
         }
-    else:
-        raw_clean_name = strip_ingredient_descriptors(clean_item_name_artifacts(cleaned_line))
-        if len(raw_clean_name) > 1:
-            german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
-            return {
-                "name": german_match_name,
-                "original_name": raw_clean_name.title(),
-                "quantity": 1.0,
-                "unit": "Stück",
-                "mapped_german_item": german_match_name,
-                "generic_category": "Vorrat"
-            }
     return None
-
 
 def parse_recipe_one_or_text_paste(raw_text: str, db) -> tuple[str, list[dict]]:
     lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
@@ -240,57 +190,22 @@ def parse_recipe_one_or_text_paste(raw_text: str, db) -> tuple[str, list[dict]]:
     ingredients = []
     
     for line in lines[1:]:
-        clean_lower = line.lower().strip()
-        if re.search(INSTRUCTION_STOP_REGEX, clean_lower):
-            break
-        if re.search(r"^(ingredientes|ingredients|zutaten):?", clean_lower):
-            continue
-            
         ing_dict = parse_single_ingredient_line(line, db)
         if ing_dict:
             ingredients.append(ing_dict)
 
     return title, ingredients
 
-
-def parse_chefkoch_url(url: str, db) -> tuple[str, list[dict]]:
-    if not HAS_RECIPE_SCRAPERS:
-        raise ImportError("`recipe-scrapers` package is missing. Install it using `pip install recipe-scrapers`.")
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    response = requests.get(url, headers=headers, timeout=10)
-    
-    if response.status_code == 403:
-        raise PermissionError("Chefkoch blocked the automated request. Please paste the recipe text directly using Option B.")
-    
-    response.raise_for_status()
-
-    scraper = scrape_html(response.text, org_url=url)
-    title = scraper.title()
-    raw_ingredients = scraper.ingredients()
-    
-    parsed_ingredients = []
-    for raw_ing in raw_ingredients:
-        ing_dict = parse_single_ingredient_line(raw_ing, db)
-        if ing_dict:
-            parsed_ingredients.append(ing_dict)
-
-    return title, parsed_ingredients
-
-
-# -----------------------------------------------------------------------------
-# 4. WEEKLY AGGREGATION & HIERARCHICAL PRICING STRATEGY
-# -----------------------------------------------------------------------------
 def aggregate_weekly_ingredients(selected_recipes_config):
+    """
+    ROOT CAUSE FIX: Single Weekly Plan Scope.
+    Strictly aggregates ingredients for the active weekly selection only.
+    """
     aggregated = {}
 
     for item in selected_recipes_config:
         recipe = item["recipe"]
-        servings = item["servings"]
-        scale = servings
+        scale = item["servings"]
 
         for ing in recipe.get("ingredients", []):
             german_name = ing.get("mapped_german_item") or ing.get("name", "").strip()
@@ -314,7 +229,6 @@ def aggregate_weekly_ingredients(selected_recipes_config):
 
     return list(aggregated.values())
 
-
 def calculate_weekly_basket_strategies(aggregated_ingredients, db):
     stores = ["Aldi Nord", "Kaufland", "Lidl", "REWE", "Edeka", "Netto"]
     store_totals = {store: 0.0 for store in stores}
@@ -326,6 +240,7 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
         orig_name = ing["original_name"]
         category = ing["category"]
         quantity = ing["quantity"]
+        unit = ing["unit"]
         
         cheapest_price = float('inf')
         cheapest_store = ""
@@ -333,15 +248,21 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
         cheapest_is_sale = False
 
         for store in stores:
-            price_info = find_best_ingredient_price(german_name, store, db, category=category)
-            unit_price = price_info["price"]
-            total_cost = round(unit_price * quantity, 2)
+            price_info = find_best_ingredient_price(
+                german_sku=german_name,
+                store_name=store,
+                db=db,
+                category=category,
+                quantity=quantity,
+                unit=unit
+            )
+            total_cost = price_info["price"]
             store_totals[store] += total_cost
             
             store_itemized[store].append({
                 "Ingredient (Original)": orig_name,
                 "German Store Match": german_name,
-                "Quantity": f"{quantity:.1f} {ing['unit']}",
+                "Quantity": f"{quantity:.1f} {unit}",
                 "Matched Product": price_info["product_name"],
                 "Tier / Status": f"{price_info.get('pricing_tier', 'Standard')} {'🏷️' if price_info['is_on_sale'] else '📌'}",
                 "Price (€)": total_cost
@@ -356,7 +277,7 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
         multi_store_split.append({
             "Original Ingredient": orig_name,
             "German Supermarket Match": german_name,
-            "Quantity": f"{quantity:.1f} {ing['unit']}",
+            "Quantity": f"{quantity:.1f} {unit}",
             "Buy At Supermarket": cheapest_store,
             "Matched Product": cheapest_product_name,
             "Price Type": "Sale Offer 🏷️" if cheapest_is_sale else "Historical/Baseline 📌",
@@ -380,37 +301,20 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
         "multi_store_split": multi_store_split
     }
 
-
 def calculate_cheapest_recipes(recipes, db, limit=5):
     evaluated_recipes = []
-
     for r in recipes:
         agg = aggregate_weekly_ingredients([{"recipe": r, "servings": 1}])
         strategy = calculate_weekly_basket_strategies(agg, db)
-        
-        total_onsale_savings = 0.0
-        sale_ingredients_count = 0
-
-        for item in strategy["multi_store_split"]:
-            if "Sale Offer" in item["Price Type"]:
-                sale_ingredients_count += 1
-                total_onsale_savings += 0.50
-
         evaluated_recipes.append({
             "recipe": r,
             "cheapest_cost": strategy["multi_store_total"],
             "cheapest_store": strategy["best_single_store"],
-            "savings_estimate": total_onsale_savings,
-            "sale_count": sale_ingredients_count
+            "sale_count": sum(1 for item in strategy["multi_store_split"] if "Sale Offer" in item["Price Type"])
         })
-
     evaluated_recipes.sort(key=lambda x: (x["cheapest_cost"], -x["sale_count"]))
     return evaluated_recipes[:limit]
 
-
-# -----------------------------------------------------------------------------
-# BRAND HEADER BANNER
-# -----------------------------------------------------------------------------
 st.markdown("""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
@@ -418,10 +322,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
-# -----------------------------------------------------------------------------
-# APPLICATION TABS
-# -----------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏷️ Top Deals This Week",
     "📅 Weekly Meal Planner",
@@ -429,14 +329,9 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Price History"
 ])
 
-
-# -----------------------------------------------------------------------------
-# TAB 1: TOP DEALS THIS WEEK
-# -----------------------------------------------------------------------------
 with tab1:
     st.header("Weekly Store Circular Deals")
     db = get_db()
-    
     try:
         offers = db.query(Offer).all()
         table_data = [
@@ -449,79 +344,40 @@ with tab1:
             }
             for o in offers
         ]
-
         df = pd.DataFrame(table_data)
-
         if not df.empty:
-            col1, col2 = st.columns(2)
-            with col1:
-                selected_stores = st.multiselect("Filter Supermarket", options=df["Supermarket"].unique(), default=df["Supermarket"].unique(), key="tab1_store_filter")
-            with col2:
-                selected_cats = st.multiselect("Filter Category", options=df["Category"].unique(), default=df["Category"].unique(), key="tab1_cat_filter")
-
-            filtered_df = df[
-                (df["Supermarket"].isin(selected_stores)) & 
-                (df["Category"].isin(selected_cats))
-            ]
-
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-
-            st.divider()
-
-            with st.expander("🔍 Show Price History for an Offer Item"):
-                selected_item = st.selectbox("Select product to inspect:", options=df["Product Name"].unique(), key="tab1_product_select")
-                hist_records = db.query(PriceHistory).filter(PriceHistory.product_name == selected_item).all()
-                
-                if hist_records:
-                    hist_df = pd.DataFrame([{"Date": h.recorded_date, "Price (€)": h.price, "Store": h.supermarket_name} for h in hist_records])
-                    fig = px.line(hist_df, x="Date", y="Price (€)", color="Store", markers=True, title=f"Price History: {selected_item}")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No recorded price history available for this item.")
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("No circular deals found in database.")
-            if st.button("🔄 Refresh Circular Deals"):
-                run_scraper()
-                st.rerun()
-                
     finally:
         db.close()
 
-
-# -----------------------------------------------------------------------------
-# TAB 2: WEEKLY MEAL PLANNER
-# -----------------------------------------------------------------------------
 with tab2:
     st.header("Weekly Meal Planner & Basket Optimization")
     db = get_db()
-
     try:
         all_recipes = load_cached_recipes()
-
         if not all_recipes:
-            st.warning("No recipes found in database. Add or import recipes in 'Recipe Manager'.")
+            st.warning("No recipes found in database.")
         else:
             planning_mode = st.radio(
                 "Select Planning Strategy Mode:",
                 ["MODE 1: Auto-Generated Lowest-Cost Meal Plan", "MODE 2: Custom Selection & Smart Basket Comparison"],
                 horizontal=True
             )
-
             st.divider()
 
             if planning_mode == "MODE 1: Auto-Generated Lowest-Cost Meal Plan":
                 st.subheader("⚡ Top 5 Overall Lowest-Cost Recipes This Week")
                 top_deals = calculate_cheapest_recipes(all_recipes, db, limit=5)
-
                 auto_config = []
                 for item in top_deals:
                     rec = item["recipe"]
-                    st.write(f"- 🍲 **{rec['title']}** — Est. Cost: **€{item['cheapest_cost']:.2f}** | On-Sale Ingredient Matches: **{item['sale_count']}**")
+                    st.write(f"- 🍲 **{rec['title']}** — Est. Cost: **€{item['cheapest_cost']:.2f}**")
                     auto_config.append({"recipe": rec, "servings": 1})
 
                 st.divider()
                 st.subheader("Optimized Basket Strategy for Auto-Selected Menu")
-
                 agg_ingredients = aggregate_weekly_ingredients(auto_config)
                 strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db)
 
@@ -529,15 +385,13 @@ with tab2:
                 with m1:
                     st.metric("Best Single Supermarket", f"€{strategy_data['best_single_total']:.2f}", delta=strategy_data['best_single_store'])
                 with m2:
-                    st.metric("Multi-Store Split Total", f"€{strategy_data['multi_store_total']:.2f}", delta="Maximum Savings")
+                    st.metric("Multi-Store Split Total", f"€{strategy_data['multi_store_total']:.2f}", delta="Optimized")
                 with m3:
                     st.metric("Total Saved with Split Strategy", f"€{strategy_data['max_savings']:.2f}")
 
-                st.write("### Itemized Multi-Store Split List")
                 split_df = pd.DataFrame(strategy_data["multi_store_split"])
                 split_df["Price (€)"] = split_df["Price (€)"].map(lambda v: f"{v:.2f}")
                 st.dataframe(split_df, use_container_width=True, hide_index=True)
-
             else:
                 st.subheader("1. Pick Your Recipes & Portions")
                 selected_titles = st.multiselect(
@@ -545,7 +399,6 @@ with tab2:
                     options=[r["title"] for r in all_recipes],
                     default=[all_recipes[0]["title"]] if all_recipes else []
                 )
-
                 selected_recipes_config = []
                 if selected_titles:
                     cols = st.columns(min(len(selected_titles), 4))
@@ -557,281 +410,35 @@ with tab2:
 
                     st.divider()
                     st.subheader("2. Basket Cost Strategy Breakdown")
-
                     agg_ingredients = aggregate_weekly_ingredients(selected_recipes_config)
                     strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db)
 
                     m1, m2, m3 = st.columns(3)
                     with m1:
-                        st.metric("Single Supermarket Winner", f"€{strategy_data['best_single_total']:.2f}", delta=f"Cheapest Store: {strategy_data['best_single_store']}")
+                        st.metric("Single Supermarket Winner", f"€{strategy_data['best_single_total']:.2f}", delta=f"Cheapest: {strategy_data['best_single_store']}")
                     with m2:
                         st.metric("Multi-Store Split Strategy", f"€{strategy_data['multi_store_total']:.2f}", delta="Optimized")
                     with m3:
                         st.metric("Extra Savings via Split", f"€{strategy_data['max_savings']:.2f}")
 
-                    st.write("### Single Store Total Bill Comparison")
-                    single_df = pd.DataFrame([
-                        {"Supermarket": store, "Total Bill (€)": f"{price:.2f}", "Winner": "🏆 Best Single Store" if store == strategy_data['best_single_store'] else ""}
-                        for store, price in sorted(strategy_data["store_totals"].items(), key=lambda x: x[1])
-                    ])
-                    st.dataframe(single_df, use_container_width=True, hide_index=True)
-
-                    st.write("### Itemized Multi-Store Shopping Split")
                     split_df = pd.DataFrame(strategy_data["multi_store_split"])
                     split_df["Price (€)"] = split_df["Price (€)"].map(lambda v: f"{v:.2f}")
                     st.dataframe(split_df, use_container_width=True, hide_index=True)
-
     finally:
         db.close()
 
-
-# -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER
-# -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
-    
-    crud_subtab1, crud_subtab2 = st.tabs([
-        "📋 Saved Recipe Collection",
-        "📥 Add / Import Recipes"
-    ])
+    db = get_db()
+    try:
+        recipes_list = load_cached_recipes()
+        for r in recipes_list:
+            with st.expander(f"🍲 **{r['title']}** ({len(r['ingredients'])} ingredients)"):
+                for ing in r["ingredients"]:
+                    st.write(f"- {ing['quantity']} {ing['unit']} **{ing.get('original_name', ing.get('name'))}** *(SKU: `{ing.get('mapped_german_item')}`)*")
+    finally:
+        db.close()
 
-    with crud_subtab1:
-        st.subheader("Saved Recipes")
-        db = get_db()
-        try:
-            recipes_list = load_cached_recipes()
-
-            if not recipes_list:
-                st.info("No saved recipes found. Import recipes using the next tab or run database seeding.")
-            else:
-                title_counts = Counter(r["title"].strip().lower() for r in recipes_list)
-                duplicate_titles = {t for t, count in title_counts.items() if count >= 2}
-
-                search_query = st.text_input("🔍 Search recipes by title or ingredient...", key="recipe_search_input").strip().lower()
-
-                if search_query:
-                    filtered_recipes = []
-                    for r in recipes_list:
-                        title_match = search_query in r["title"].lower()
-                        ing_match = any(
-                            search_query in ing.get('original_name', '').lower() or 
-                            search_query in ing.get('name', '').lower() or
-                            search_query in ing.get('mapped_german_item', '').lower()
-                            for ing in r["ingredients"]
-                        )
-                        if title_match or ing_match:
-                            filtered_recipes.append(r)
-                else:
-                    filtered_recipes = recipes_list
-
-                for r in filtered_recipes:
-                    key = f"rec_chk_{r['id']}"
-                    if key not in st.session_state:
-                        st.session_state[key] = False
-
-                def sync_master_select():
-                    master_val = st.session_state.get("select_all_master", False)
-                    for r in filtered_recipes:
-                        st.session_state[f"rec_chk_{r['id']}"] = master_val
-
-                col_master, col_spacer = st.columns([0.4, 0.6])
-                with col_master:
-                    st.checkbox("Select All / Deselect All", key="select_all_master", on_change=sync_master_select)
-
-                checked_ids = [r["id"] for r in filtered_recipes if st.session_state.get(f"rec_chk_{r['id']}", False)]
-                placeholder_bulk_bar = st.empty()
-                st.divider()
-
-                if not filtered_recipes:
-                    st.warning(f"No recipes matching '{search_query}'.")
-                else:
-                    for r in filtered_recipes:
-                        is_duplicate = r["title"].strip().lower() in duplicate_titles
-                        display_title = f"⚠️ {r['title']}" if is_duplicate else r['title']
-                        dup_subtitle = " *(⚠️ Duplicate title detected)*" if is_duplicate else ""
-
-                        c_chk, c_title, c_edit = st.columns([0.06, 0.82, 0.12])
-
-                        with c_chk:
-                            st.checkbox("", key=f"rec_chk_{r['id']}")
-
-                        with c_title:
-                            with st.expander(f"🍲 **{display_title}** ({len(r['ingredients'])} ingredients){dup_subtitle}", expanded=False):
-                                st.write("**Ingredients List & Mapped German SKUs:**")
-                                for ing in r["ingredients"]:
-                                    orig = ing.get('original_name', ing.get('name', ''))
-                                    mapped = ing.get('mapped_german_item') or ing.get('name', orig)
-                                    cat = ing.get('generic_category', 'Vorrat')
-                                    st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: `{mapped}` | Category: `{cat}`)*")
-
-                        with c_edit:
-                            with st.popover("[ Edit ]"):
-                                st.write(f"**Edit Recipe & Learn Mappings: {r['title']}**")
-                                with st.form(key=f"inline_edit_form_{r['id']}"):
-                                    new_title = st.text_input("Recipe Title", value=r["title"])
-                                    
-                                    ing_lines = []
-                                    for ing in r["ingredients"]:
-                                        orig = ing.get('original_name', ing.get('name', ''))
-                                        mapped_sku = ing.get('mapped_german_item') or ing.get('name', orig)
-                                        cat = ing.get('generic_category', 'Vorrat')
-                                        ing_lines.append(f"{orig}, {ing['quantity']}, {ing['unit']}, {mapped_sku}, {cat}")
-                                    
-                                    new_ing_raw = st.text_area(
-                                        "Ingredients List (Original Item, Quantity, Unit, Mapped SKU, Category)",
-                                        value="\n".join(ing_lines),
-                                        height=180
-                                    )
-
-                                    if st.form_submit_button("Save & Train Learning Engine"):
-                                        db_rec = db.query(Recipe).filter(Recipe.id == r["id"]).first()
-                                        if db_rec:
-                                            db_rec.title = new_title
-                                            updated_ingredients = []
-                                            
-                                            for line in new_ing_raw.strip().split("\n"):
-                                                if line.strip():
-                                                    parts = [p.strip() for p in line.split(",")]
-                                                    if len(parts) >= 3:
-                                                        try:
-                                                            qty = float(parts[1])
-                                                        except ValueError:
-                                                            qty = 1.0
-                                                        
-                                                        raw_name = parts[0]
-                                                        unit_val = normalize_unit(parts[2])
-                                                        
-                                                        if len(parts) >= 4 and parts[3].strip():
-                                                            mapped_name = parts[3].strip().title()
-                                                            save_user_learned_mapping(raw_name, mapped_name, db)
-                                                        else:
-                                                            mapped_name = map_ingredient_to_german_sku(raw_name, db)
-
-                                                        cat_val = parts[4].strip().title() if len(parts) >= 5 and parts[4].strip() else "Vorrat"
-
-                                                        updated_ingredients.append({
-                                                            "name": mapped_name,
-                                                            "original_name": raw_name.title(),
-                                                            "quantity": qty,
-                                                            "unit": unit_val,
-                                                            "mapped_german_item": mapped_name,
-                                                            "generic_category": cat_val
-                                                        })
-                                            
-                                            db_rec.ingredients = updated_ingredients
-                                            db.commit()
-                                            st.cache_data.clear()
-                                            st.toast(f"Updated '{new_title}' and saved corrections!")
-                                            st.rerun()
-
-                if checked_ids:
-                    with placeholder_bulk_bar.container():
-                        st.markdown(f"""
-                        <div class="bulk-action-bar">
-                            <span style="color: #fca5a5; font-weight: 600;">⚠️ {len(checked_ids)} recipe(s) selected for removal</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        if st.button(f"🗑️ Delete Selected Recipes ({len(checked_ids)})", type="primary", key="btn_exec_bulk_delete"):
-                            db.query(Recipe).filter(Recipe.id.in_(checked_ids)).delete(synchronize_session=False)
-                            db.commit()
-                            st.cache_data.clear()
-
-                            for r_id in checked_ids:
-                                k = f"rec_chk_{r_id}"
-                                if k in st.session_state:
-                                    del st.session_state[k]
-                            if "select_all_master" in st.session_state:
-                                st.session_state["select_all_master"] = False
-
-                            st.toast(f"Deleted {len(checked_ids)} recipe(s)!")
-                            st.rerun()
-
-        finally:
-            db.close()
-
-    with crud_subtab2:
-        st.subheader("Add / Import Recipes")
-        st.caption("Import via Chefkoch URL or Plain Text.")
-        db = get_db()
-
-        try:
-            import_mode = st.radio("Import Method:", ["Option A: Chefkoch URL Import", "Option B: Recipe One / Plain Text Paste"], horizontal=True, key="import_mode_choice")
-
-            if import_mode == "Option A: Chefkoch URL Import":
-                chefkoch_url = st.text_input(
-                    "Paste Chefkoch Recipe Link:",
-                    placeholder="https://www.chefkoch.de/rezepte/12345/Spaghetti-Bolognese.html",
-                    key="input_chefkoch_url"
-                )
-
-                if st.button("🔗 Scrape & Save Recipe", key="btn_scrape_chefkoch"):
-                    if chefkoch_url.strip():
-                        try:
-                            title, ingredients = parse_chefkoch_url(chefkoch_url.strip(), db)
-                            if ingredients:
-                                new_recipe = Recipe(title=title, instructions="")
-                                new_recipe.ingredients = ingredients
-                                db.add(new_recipe)
-                                db.commit()
-                                st.cache_data.clear()
-                                st.success(f"Successfully scraped & imported '{title}' ({len(ingredients)} ingredients)!")
-                                st.rerun()
-                            else:
-                                st.warning(f"Scraped '{title}', but no valid ingredients were found.")
-                        except PermissionError as pe:
-                            st.error(str(pe))
-                        except Exception as e:
-                            st.error(f"Chefkoch blocked request. Please paste text directly using Option B. (Error: {e})")
-                    else:
-                        st.warning("Please paste a valid recipe URL into the box first.")
-
-            else:
-                sample_placeholder = (
-                    "Bolo de Cenoura\n"
-                    "200 g Farinha de trigo\n"
-                    "3 Stück Eier\n"
-                    "200 g Açúcar\n"
-                    "100 g Manteiga"
-                )
-                raw_text = st.text_area("Paste text here (Title on line 1, then ingredient lines):", height=180, placeholder=sample_placeholder, key="raw_text_clean")
-
-                if st.button("Parse & Save Ingredients", key="btn_text_extract"):
-                    if raw_text.strip():
-                        t, ing = parse_recipe_one_or_text_paste(raw_text, db)
-                        if ing:
-                            new_recipe = Recipe(title=t, instructions="")
-                            new_recipe.ingredients = ing
-                            db.add(new_recipe)
-                            db.commit()
-                            st.cache_data.clear()
-                            st.success(f"Saved recipe ingredients: '{t}'!")
-                            st.rerun()
-                        else:
-                            st.warning("No valid ingredients matched.")
-                    else:
-                        st.warning("Please paste recipe text into the box first.")
-
-            st.divider()
-            st.subheader("Database Maintenance & Seed Defaults")
-            if st.button("🌱 Re-seed Default PDF Recipes", key="btn_manual_reseed"):
-                db.query(Recipe).delete(synchronize_session=False)
-                db.commit()
-                seed_database()
-                st.cache_data.clear()
-                for k in list(st.session_state.keys()):
-                    if k.startswith("rec_chk_"):
-                        del st.session_state[k]
-                st.toast("Database successfully re-seeded!")
-                st.rerun()
-
-        finally:
-            db.close()
-
-
-# -----------------------------------------------------------------------------
-# TAB 4: PRICE HISTORY
-# -----------------------------------------------------------------------------
 with tab4:
     st.header("Historical Price Trends")
     db = get_db()
@@ -839,22 +446,13 @@ with tab4:
         history_records = db.query(PriceHistory).all()
         if history_records:
             hist_df = pd.DataFrame([
-                {
-                    "Product": h.product_name,
-                    "Supermarket": h.supermarket_name,
-                    "Price": h.price,
-                    "Date": h.recorded_date
-                }
+                {"Product": h.product_name, "Supermarket": h.supermarket_name, "Price": h.price, "Date": h.recorded_date}
                 for h in history_records
             ])
-
-            selected_product = st.selectbox("Select product to inspect:", options=hist_df["Product"].unique(), key="tab4_product_select")
-
-            with st.expander("📊 Click to View Price History Chart", expanded=True):
-                filtered_hist = hist_df[hist_df["Product"] == selected_product].sort_values(by="Date")
-                fig = px.line(filtered_hist, x="Date", y="Price", color="Supermarket", markers=True, title=f"Price History: {selected_product}")
-                fig.update_layout(yaxis_title="Price (€)", xaxis_title="Date")
-                st.plotly_chart(fig, use_container_width=True)
+            selected_product = st.selectbox("Select product to inspect:", options=hist_df["Product"].unique())
+            filtered_hist = hist_df[hist_df["Product"] == selected_product].sort_values(by="Date")
+            fig = px.line(filtered_hist, x="Date", y="Price", color="Supermarket", markers=True, title=f"Price History: {selected_product}")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No recorded price history available.")
     finally:
