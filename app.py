@@ -11,7 +11,7 @@ try:
 except ImportError:
     HAS_RECIPE_SCRAPERS = False
 
-from database import init_db, SessionLocal, Offer, Recipe, Ingredient, PriceHistory, UserLearnedMapping
+from database import init_db, SessionLocal, Offer, StandardBaselinePrice, Recipe, Ingredient, PriceHistory, UserLearnedMapping
 from scraper import run_scraper
 from engine import (
     find_best_ingredient_price,
@@ -21,9 +21,6 @@ from engine import (
 )
 from seed_database import seed_database, seed_recipes
 
-# -----------------------------------------------------------------------------
-# 1. PAGE CONFIG & DATABASE SETUP
-# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Pro-Meal | Smart Circular Deals & Weekly Meal Optimization",
     page_icon="🥗",
@@ -73,10 +70,17 @@ def check_and_seed_on_startup():
 
 check_and_seed_on_startup()
 
+# -----------------------------------------------------------------------------
+# SIDEBAR TIMING TOGGLE (Feature 2)
+# -----------------------------------------------------------------------------
+st.sidebar.markdown("### ⚙️ Planning Parameters")
+planning_week = st.sidebar.radio(
+    "📅 Planning For:",
+    ["Current Week", "Next Week"],
+    index=0,
+    help="Select whether to evaluate active current discounts or upcoming advance Prospekt normal prices."
+)
 
-# -----------------------------------------------------------------------------
-# 2. CUSTOM CSS STYLING
-# -----------------------------------------------------------------------------
 st.markdown("""
 <style>
     .main {
@@ -129,30 +133,14 @@ st.markdown("""
         font-weight: 600 !important;
         transition: all 0.2s ease !important;
     }
-    .bulk-action-bar {
-        background: #450a0a;
-        border: 1px solid #991b1b;
-        padding: 0.85rem 1.25rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-
-# -----------------------------------------------------------------------------
-# 3. PARSING ENGINE WITH LEARNING HOOKS
-# -----------------------------------------------------------------------------
 UNIT_MAP = {
     "colher de chá": "TL", "colheres de chá": "TL", "colher de sopa": "EL", "colheres de sopa": "EL",
     "xícara": "Tasse", "xícaras": "Tasse", "grama": "g", "gramas": "g", "quilo": "kg", "quilos": "kg",
     "dente": "Zehe", "dentes": "Zehe", "unidade": "Stück", "unidades": "Stück", "lata": "Dose", "latas": "Dose",
-    "pitada": "Prise", "ml": "ml", "g": "g", "kg": "kg", "l": "L",
-    "teelöffel": "TL", "esslöffel": "EL", "zehe": "Zehe", "zehen": "Zehe", "stück": "Stück", "dose": "Dose",
-    "dosen": "Dose", "prise": "Prise", "prisen": "Prise", "packung": "Packung", "packungen": "Packung"
+    "pitada": "Prise", "ml": "ml", "g": "g", "kg": "kg", "l": "L"
 }
 
 def normalize_unit(unit_str: str) -> str:
@@ -168,23 +156,10 @@ def parse_single_ingredient_line(line_text: str, db) -> dict | None:
     
     if match:
         qty_str, unit_str, _, name_str = match.groups()
-        qty_str = qty_str or "1"
-        unit_str = unit_str or "Stück"
-
-        try:
-            qty_clean = qty_str.replace(",", ".")
-            if "/" in qty_clean:
-                num, den = qty_clean.split("/")
-                qty = float(num) / float(den)
-            else:
-                qty = float(qty_clean)
-        except ValueError:
-            qty = 1.0
-
-        unit = normalize_unit(unit_str)
+        qty = float(qty_str.replace(",", ".")) if qty_str else 1.0
+        unit = normalize_unit(unit_str or "Stück")
         raw_clean_name = strip_ingredient_descriptors(name_str)
         original_name = raw_clean_name.title()
-        
         german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
 
         return {
@@ -197,28 +172,8 @@ def parse_single_ingredient_line(line_text: str, db) -> dict | None:
         }
     return None
 
-def parse_recipe_one_or_text_paste(raw_text: str, db) -> tuple[str, list[dict]]:
-    lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
-    if not lines:
-        return "Untitled Recipe", []
-
-    title = lines[0].lstrip("#•-* ").strip()
-    ingredients = []
-    
-    for line in lines[1:]:
-        ing_dict = parse_single_ingredient_line(line, db)
-        if ing_dict:
-            ingredients.append(ing_dict)
-
-    return title, ingredients
-
-
-# -----------------------------------------------------------------------------
-# 4. WEEKLY AGGREGATION & HIERARCHICAL PRICING STRATEGY
-# -----------------------------------------------------------------------------
 def aggregate_weekly_ingredients(selected_recipes_config):
     aggregated = {}
-
     for item in selected_recipes_config:
         recipe = item["recipe"]
         scale = item["servings"]
@@ -231,7 +186,6 @@ def aggregate_weekly_ingredients(selected_recipes_config):
             category = ing.get("generic_category", "Vorrat")
 
             key = (german_name.lower(), unit.lower())
-
             if key not in aggregated:
                 aggregated[key] = {
                     "german_name": german_name,
@@ -242,10 +196,9 @@ def aggregate_weekly_ingredients(selected_recipes_config):
                 }
             else:
                 aggregated[key]["quantity"] += qty
-
     return list(aggregated.values())
 
-def calculate_weekly_basket_strategies(aggregated_ingredients, db):
+def calculate_weekly_basket_strategies(aggregated_ingredients, db, planning_week="Current Week"):
     stores = ["Aldi Nord", "Kaufland", "Lidl", "REWE", "Edeka", "Netto"]
     store_totals = {store: 0.0 for store in stores}
     store_itemized = {store: [] for store in stores}
@@ -270,7 +223,8 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
                 db=db,
                 category=category,
                 quantity=quantity,
-                unit=unit
+                unit=unit,
+                planning_week=planning_week
             )
             total_cost = price_info["price"]
             store_totals[store] += total_cost
@@ -280,7 +234,7 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
                 "German Store Match": german_name,
                 "Quantity": f"{quantity:.1f} {unit}",
                 "Matched Product": price_info["product_name"],
-                "Tier / Status": f"{price_info.get('pricing_tier', 'Standard')} {'🏷️' if price_info['is_on_sale'] else '📌'}",
+                "Pricing Tier": f"{price_info.get('pricing_tier', 'Standard')} {'🏷️' if price_info['is_on_sale'] else '📌'}",
                 "Price (€)": total_cost
             })
 
@@ -296,14 +250,13 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
             "Quantity": f"{quantity:.1f} {unit}",
             "Buy At Supermarket": cheapest_store,
             "Matched Product": cheapest_product_name,
-            "Price Type": "Sale Offer 🏷️" if cheapest_is_sale else "Historical/Baseline 📌",
+            "Price Type": "Sale Offer 🏷️" if cheapest_is_sale else "Baseline/Normal 📌",
             "Price (€)": cheapest_price
         })
 
     sorted_stores = sorted(store_totals.items(), key=lambda x: x[1])
     best_single_store = sorted_stores[0][0] if sorted_stores else "N/A"
     best_single_total = round(sorted_stores[0][1], 2) if sorted_stores else 0.0
-
     multi_store_total = round(sum(item["Price (€)"] for item in multi_store_split), 2)
     max_savings = round(best_single_total - multi_store_total, 2)
 
@@ -317,11 +270,11 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
         "multi_store_split": multi_store_split
     }
 
-def calculate_cheapest_recipes(recipes, db, limit=5):
+def calculate_cheapest_recipes(recipes, db, planning_week="Current Week", limit=5):
     evaluated_recipes = []
     for r in recipes:
         agg = aggregate_weekly_ingredients([{"recipe": r, "servings": 1}])
-        strategy = calculate_weekly_basket_strategies(agg, db)
+        strategy = calculate_weekly_basket_strategies(agg, db, planning_week=planning_week)
         evaluated_recipes.append({
             "recipe": r,
             "cheapest_cost": strategy["multi_store_total"],
@@ -331,21 +284,13 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
     evaluated_recipes.sort(key=lambda x: (x["cheapest_cost"], -x["sale_count"]))
     return evaluated_recipes[:limit]
 
-
-# -----------------------------------------------------------------------------
-# BRAND HEADER BANNER
-# -----------------------------------------------------------------------------
-st.markdown("""
+st.markdown(f"""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
-    <p class="brand-tagline">Smart Circular Deals & Hierarchical Weekly Meal Optimization (Berlin 10369)</p>
+    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369) — Mode: <b>{planning_week}</b></p>
 </div>
 """, unsafe_allow_html=True)
 
-
-# -----------------------------------------------------------------------------
-# APPLICATION TABS
-# -----------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏷️ Top Deals This Week",
     "📅 Weekly Meal Planner",
@@ -353,8 +298,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Price History"
 ])
 
-
-# TAB 1: TOP DEALS THIS WEEK
 with tab1:
     st.header("Weekly Store Circular Deals")
     db = get_db()
@@ -374,14 +317,12 @@ with tab1:
         if not df.empty:
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
-            st.info("No circular deals found in database.")
+            st.info("No active circular deals found in database.")
     finally:
         db.close()
 
-
-# TAB 2: WEEKLY MEAL PLANNER
 with tab2:
-    st.header("Weekly Meal Planner & Basket Optimization")
+    st.header(f"Weekly Meal Planner & Basket Optimization ({planning_week})")
     db = get_db()
     try:
         all_recipes = load_cached_recipes()
@@ -396,8 +337,8 @@ with tab2:
             st.divider()
 
             if planning_mode == "MODE 1: Auto-Generated Lowest-Cost Meal Plan":
-                st.subheader("⚡ Top 5 Overall Lowest-Cost Recipes This Week")
-                top_deals = calculate_cheapest_recipes(all_recipes, db, limit=5)
+                st.subheader(f"⚡ Top 5 Lowest-Cost Recipes ({planning_week})")
+                top_deals = calculate_cheapest_recipes(all_recipes, db, planning_week=planning_week, limit=5)
                 auto_config = []
                 for item in top_deals:
                     rec = item["recipe"]
@@ -405,9 +346,9 @@ with tab2:
                     auto_config.append({"recipe": rec, "servings": 1})
 
                 st.divider()
-                st.subheader("Optimized Basket Strategy for Auto-Selected Menu")
+                st.subheader("Optimized Basket Strategy")
                 agg_ingredients = aggregate_weekly_ingredients(auto_config)
-                strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db)
+                strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db, planning_week=planning_week)
 
                 m1, m2, m3 = st.columns(3)
                 with m1:
@@ -415,7 +356,7 @@ with tab2:
                 with m2:
                     st.metric("Multi-Store Split Total", f"€{strategy_data['multi_store_total']:.2f}", delta="Optimized")
                 with m3:
-                    st.metric("Total Saved with Split Strategy", f"€{strategy_data['max_savings']:.2f}")
+                    st.metric("Total Saved via Split", f"€{strategy_data['max_savings']:.2f}")
 
                 split_df = pd.DataFrame(strategy_data["multi_store_split"])
                 split_df["Price (€)"] = split_df["Price (€)"].map(lambda v: f"{v:.2f}")
@@ -439,7 +380,7 @@ with tab2:
                     st.divider()
                     st.subheader("2. Basket Cost Strategy Breakdown")
                     agg_ingredients = aggregate_weekly_ingredients(selected_recipes_config)
-                    strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db)
+                    strategy_data = calculate_weekly_basket_strategies(agg_ingredients, db, planning_week=planning_week)
 
                     m1, m2, m3 = st.columns(3)
                     with m1:
@@ -455,8 +396,6 @@ with tab2:
     finally:
         db.close()
 
-
-# TAB 3: RECIPE MANAGER
 with tab3:
     st.header("Recipe Manager")
     db = get_db()
@@ -469,23 +408,28 @@ with tab3:
     finally:
         db.close()
 
-
-# TAB 4: PRICE HISTORY
 with tab4:
-    st.header("Historical Price Trends")
+    st.header("Historical Price Trends & Advance Baselines")
     db = get_db()
     try:
+        baselines = db.query(StandardBaselinePrice).all()
+        if baselines:
+            base_df = pd.DataFrame([
+                {"Supermarket": b.supermarket_name, "Product": b.product_name, "Standard Price (€)": b.price, "Category": b.category}
+                for b in baselines
+            ])
+            st.subheader("Advance Prospekt Baseline Indexing (Normal Pricing)")
+            st.dataframe(base_df, use_container_width=True, hide_index=True)
+
         history_records = db.query(PriceHistory).all()
         if history_records:
             hist_df = pd.DataFrame([
                 {"Product": h.product_name, "Supermarket": h.supermarket_name, "Price": h.price, "Date": h.recorded_date}
                 for h in history_records
             ])
-            selected_product = st.selectbox("Select product to inspect:", options=hist_df["Product"].unique())
+            selected_product = st.selectbox("Select product to inspect history:", options=hist_df["Product"].unique())
             filtered_hist = hist_df[hist_df["Product"] == selected_product].sort_values(by="Date")
             fig = px.line(filtered_hist, x="Date", y="Price", color="Supermarket", markers=True, title=f"Price History: {selected_product}")
             st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No recorded price history available.")
     finally:
         db.close()
