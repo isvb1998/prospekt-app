@@ -1,5 +1,6 @@
 import re
 import io
+import json
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -293,7 +294,7 @@ st.caption("Weekly offers & multi-language recipe planner — Berlin 10369 (Land
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏷️ Top Deals This Week",
     "📅 Weekly Meal Planner",
-    "📖 Recipe Manager & PDF Batch",
+    "📖 Recipe Manager & CRUD",
     "📈 Price History"
 ])
 
@@ -351,7 +352,7 @@ with tab1:
 
 
 # -----------------------------------------------------------------------------
-# TAB 2: WEEKLY MEAL PLANNER (DYNAMIC MODES)
+# TAB 2: WEEKLY MEAL PLANNER
 # -----------------------------------------------------------------------------
 with tab2:
     st.header("Weekly Meal Planner")
@@ -361,7 +362,7 @@ with tab2:
         all_recipes = db.query(Recipe).all()
 
         if not all_recipes:
-            st.warning("No recipes found in database. Add or import recipes in 'Recipe Manager & PDF Batch'.")
+            st.warning("No recipes found in database. Add or import recipes in 'Recipe Manager & CRUD'.")
         else:
             planning_mode = st.radio(
                 "Select Planning Strategy Mode:",
@@ -371,9 +372,6 @@ with tab2:
 
             st.divider()
 
-            # -----------------------------------------------------------------
-            # MODE 1: AUTO-GENERATED LOWEST-COST MEAL PLAN
-            # -----------------------------------------------------------------
             if planning_mode == "MODE 1: Auto-Generated Lowest-Cost Meal Plan":
                 st.subheader("⚡ Top 5 Overall Lowest-Cost Recipes This Week")
                 st.caption("Automatically calculated by ranking stored recipes against active weekly offers.")
@@ -405,9 +403,6 @@ with tab2:
                 split_df["Price (€)"] = split_df["Price (€)"].map(lambda v: f"{v:.2f}")
                 st.dataframe(split_df, use_container_width=True, hide_index=True)
 
-            # -----------------------------------------------------------------
-            # MODE 2: CUSTOM SELECTION & SMART BASKET COMPARISON
-            # -----------------------------------------------------------------
             else:
                 st.subheader("1. Pick Your Recipes & Portions")
                 selected_titles = st.multiselect(
@@ -456,74 +451,233 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER & PDF BATCH IMPORT
+# TAB 3: RECIPE MANAGER & CRUD
 # -----------------------------------------------------------------------------
 with tab3:
-    st.header("Recipe Manager & Batch PDF Import")
-    db = get_db()
+    st.header("Recipe Manager & Interactive CRUD")
+    
+    crud_subtab1, crud_subtab2, crud_subtab3 = st.tabs([
+        "✏️ Manage & Edit Saved Recipes",
+        "📄 Add / Import Recipes",
+        "👁️ View Recipe Details"
+    ])
 
-    try:
-        import_mode = st.radio("Import Method:", ["Batch Upload PDF Recipes", "Paste Raw Recipe Text"], horizontal=True)
+    # -------------------------------------------------------------------------
+    # SUB-TAB 1: MANAGE & EDIT SAVED RECIPES (BULK DATA EDITOR + SINGLE FORM)
+    # -------------------------------------------------------------------------
+    with crud_subtab1:
+        st.subheader("Interactive Bulk Recipe Table")
+        st.caption("Edit values directly inside table cells or select rows to delete. Click save to apply changes.")
 
-        if import_mode == "Batch Upload PDF Recipes":
-            st.subheader("📄 Batch PDF Recipe Upload")
-            uploaded_file = st.file_uploader("Upload a recipe collection PDF", type=["pdf"])
+        db = get_db()
+        try:
+            recipes_list = db.query(Recipe).all()
 
-            if uploaded_file is not None:
-                if st.button("Extract & Save Recipes from PDF"):
-                    parsed_recipes = parse_pdf_recipes(io.BytesIO(uploaded_file.read()))
-                    
-                    if parsed_recipes:
-                        count = 0
-                        for t, inst, ing in parsed_recipes:
+            if not recipes_list:
+                st.info("No saved recipes found.")
+            else:
+                # Prepare dataframe for st.data_editor
+                table_rows = []
+                for r in recipes_list:
+                    table_rows.append({
+                        "ID": r.id,
+                        "Title": r.title,
+                        "Instructions": r.instructions,
+                        "Ingredients Count": len(r.ingredients)
+                    })
+                
+                df_recipes = pd.DataFrame(table_rows)
+
+                edited_df = st.data_editor(
+                    df_recipes,
+                    num_rows="dynamic",
+                    key="recipe_bulk_editor",
+                    disabled=["ID", "Ingredients Count"],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                if st.button("💾 Save Bulk Table Changes to Database"):
+                    # 1. Handle Deletions: Compare IDs in original vs edited dataframe
+                    current_ids = set(df_recipes["ID"].tolist())
+                    edited_ids = set(edited_df["ID"].dropna().astype(int).tolist())
+                    deleted_ids = current_ids - edited_ids
+
+                    if deleted_ids:
+                        for d_id in deleted_ids:
+                            rec_to_del = db.query(Recipe).filter(Recipe.id == d_id).first()
+                            if rec_to_del:
+                                db.delete(rec_to_del)
+
+                    # 2. Handle Cell Updates
+                    for idx, row in edited_df.iterrows():
+                        if pd.notna(row["ID"]):
+                            r_id = int(row["ID"])
+                            rec = db.query(Recipe).filter(Recipe.id == r_id).first()
+                            if rec:
+                                rec.title = str(row["Title"])
+                                rec.instructions = str(row["Instructions"])
+
+                    db.commit()
+                    st.success("Successfully synchronized changes with SQLite database!")
+                    st.rerun()
+
+                st.divider()
+
+                # -------------------------------------------------------------
+                # SINGLE RECIPE FORM EDITOR & PERMANENT DELETER
+                # -------------------------------------------------------------
+                st.subheader("Single Recipe Form Editor")
+                selected_recipe_title = st.selectbox(
+                    "Select a specific recipe to edit or delete:",
+                    options=[r.title for r in recipes_list],
+                    key="single_recipe_selector"
+                )
+
+                target_recipe = next((r for r in recipes_list if r.title == selected_recipe_title), None)
+
+                if target_recipe:
+                    with st.form("edit_single_recipe_form"):
+                        edit_title = st.text_input("Title", value=target_recipe.title)
+                        edit_instructions = st.text_area("Instructions", value=target_recipe.instructions, height=150)
+                        
+                        # Format ingredients into line-by-line raw text representation
+                        ing_lines = []
+                        for ing in target_recipe.ingredients:
+                            name = ing.get('original_name', ing['name'])
+                            ing_lines.append(f"{name}, {ing['quantity']}, {ing['unit']}")
+                        
+                        edit_ingredients_raw = st.text_area(
+                            "Ingredients (Format: Name, Quantity, Unit — one item per line)",
+                            value="\n".join(ing_lines),
+                            height=150
+                        )
+
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            submit_edits = st.form_submit_button("💾 Save Edits for Selected Recipe")
+                        with col_btn2:
+                            delete_single = st.form_submit_button("🚨 Delete Selected Recipe")
+
+                        if submit_edits:
+                            db_rec = db.query(Recipe).filter(Recipe.id == target_recipe.id).first()
+                            if db_rec:
+                                db_rec.title = edit_title
+                                db_rec.instructions = edit_instructions
+                                
+                                # Re-parse edited ingredients line by line
+                                updated_ingredients = []
+                                for line in edit_ingredients_raw.strip().split("\n"):
+                                    if line.strip():
+                                        parts = [p.strip() for p in line.split(",")]
+                                        if len(parts) >= 3:
+                                            try:
+                                                qty = float(parts[1])
+                                            except ValueError:
+                                                qty = 1.0
+                                            
+                                            raw_name = parts[0]
+                                            mapped_name = translate_to_german_grocery(raw_name)
+                                            updated_ingredients.append({
+                                                "name": mapped_name,
+                                                "original_name": raw_name,
+                                                "quantity": qty,
+                                                "unit": normalize_unit(parts[2])
+                                            })
+                                
+                                db_rec.ingredients = updated_ingredients
+                                db.commit()
+                                st.success(f"Recipe '{edit_title}' updated successfully!")
+                                st.rerun()
+
+                        if delete_single:
+                            db_rec = db.query(Recipe).filter(Recipe.id == target_recipe.id).first()
+                            if db_rec:
+                                db.delete(db_rec)
+                                db.commit()
+                                st.warning(f"Recipe '{target_recipe.title}' permanently deleted.")
+                                st.rerun()
+
+        finally:
+            db.close()
+
+    # -------------------------------------------------------------------------
+    # SUB-TAB 2: ADD / IMPORT RECIPES
+    # -------------------------------------------------------------------------
+    with crud_subtab2:
+        st.subheader("Add or Batch Import Recipes")
+        db = get_db()
+
+        try:
+            import_mode = st.radio("Import Method:", ["Batch Upload PDF Recipes", "Paste Raw Recipe Text"], horizontal=True, key="add_recipe_import_mode")
+
+            if import_mode == "Batch Upload PDF Recipes":
+                uploaded_file = st.file_uploader("Upload a recipe collection PDF", type=["pdf"], key="crud_pdf_uploader")
+
+                if uploaded_file is not None:
+                    if st.button("Extract & Save Recipes from PDF", key="btn_pdf_import"):
+                        parsed_recipes = parse_pdf_recipes(io.BytesIO(uploaded_file.read()))
+                        
+                        if parsed_recipes:
+                            count = 0
+                            for t, inst, ing in parsed_recipes:
+                                new_recipe = Recipe(title=t, instructions=inst)
+                                new_recipe.ingredients = ing
+                                db.add(new_recipe)
+                                count += 1
+                            db.commit()
+                            st.success(f"Successfully imported {count} recipes from PDF!")
+                            st.rerun()
+                        else:
+                            st.error("Could not parse valid recipes from PDF. Ensure text layout has ingredients listed clearly.")
+
+            else:
+                sample_placeholder = (
+                    "Bolo de Cenoura com Cobertura\n"
+                    "• 200 Gram Farinha de trigo\n"
+                    "• 3 Unidades Ovo\n"
+                    "• 200 Gram Açúcar\n"
+                    "• 100 Gram Manteiga\n\n"
+                    "Modo de preparo:\n"
+                    "1. Misture os ingredientes e asse por 40 minutos."
+                )
+                raw_text = st.text_area("Paste text here:", height=200, placeholder=sample_placeholder, key="crud_raw_text")
+
+                if st.button("Parse & Save Text Recipe", key="btn_text_import"):
+                    if raw_text.strip():
+                        t, inst, ing = parse_raw_recipe_text(raw_text)
+                        if ing:
                             new_recipe = Recipe(title=t, instructions=inst)
                             new_recipe.ingredients = ing
                             db.add(new_recipe)
-                            count += 1
-                        db.commit()
-                        st.success(f"Successfully imported {count} recipes from PDF!")
-                        st.rerun()
-                    else:
-                        st.error("Could not parse valid recipes from PDF. Ensure text layout has ingredients listed clearly.")
+                            db.commit()
+                            st.success(f"Saved recipe: '{t}'!")
+                            st.rerun()
 
-        else:
-            st.subheader("📝 Paste Raw Recipe Text")
-            sample_placeholder = (
-                "Bolo de Cenoura com Cobertura\n"
-                "• 200 Gram Farinha de trigo\n"
-                "• 3 Unidades Ovo\n"
-                "• 200 Gram Açúcar\n"
-                "• 100 Gram Manteiga\n\n"
-                "Modo de preparo:\n"
-                "1. Misture os ingredientes e asse por 40 minutos."
-            )
-            raw_text = st.text_area("Paste text here:", height=200, placeholder=sample_placeholder)
+        finally:
+            db.close()
 
-            if st.button("Parse & Save Text Recipe"):
-                if raw_text.strip():
-                    t, inst, ing = parse_raw_recipe_text(raw_text)
-                    if ing:
-                        new_recipe = Recipe(title=t, instructions=inst)
-                        new_recipe.ingredients = ing
-                        db.add(new_recipe)
-                        db.commit()
-                        st.success(f"Saved recipe: '{t}'!")
-                        st.rerun()
-
-        st.divider()
+    # -------------------------------------------------------------------------
+    # SUB-TAB 3: VIEW RECIPE DETAILS
+    # -------------------------------------------------------------------------
+    with crud_subtab3:
         st.subheader("Saved Recipes Collection")
-        recipes_list = db.query(Recipe).all()
-        for r in recipes_list:
-            with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
-                st.write("**Ingredients:**")
-                for ing in r.ingredients:
-                    orig = ing.get('original_name', ing['name'])
-                    st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
-                st.write("**Instructions:**")
-                st.write(r.instructions)
-
-    finally:
-        db.close()
+        db = get_db()
+        try:
+            recipes_list = db.query(Recipe).all()
+            if not recipes_list:
+                st.info("No recipes saved yet.")
+            else:
+                for r in recipes_list:
+                    with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
+                        st.write("**Ingredients:**")
+                        for ing in r.ingredients:
+                            orig = ing.get('original_name', ing['name'])
+                            st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
+                        st.write("**Instructions:**")
+                        st.write(r.instructions)
+        finally:
+            db.close()
 
 
 # -----------------------------------------------------------------------------
