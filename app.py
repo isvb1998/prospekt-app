@@ -282,7 +282,7 @@ def parse_chefkoch_url(url: str, db) -> tuple[str, list[dict]]:
 
 
 # -----------------------------------------------------------------------------
-# 4. WEEKLY AGGREGATION & STRATEGY ENGINE
+# 4. WEEKLY AGGREGATION & HIERARCHICAL PRICING STRATEGY
 # -----------------------------------------------------------------------------
 def aggregate_weekly_ingredients(selected_recipes_config):
     aggregated = {}
@@ -297,6 +297,7 @@ def aggregate_weekly_ingredients(selected_recipes_config):
             orig_name = ing.get("original_name", ing.get("name", german_name))
             qty = float(ing.get("quantity", 1.0)) * scale
             unit = ing.get("unit", "").strip()
+            category = ing.get("generic_category", "Vorrat")
 
             key = (german_name.lower(), unit.lower())
 
@@ -305,7 +306,8 @@ def aggregate_weekly_ingredients(selected_recipes_config):
                     "german_name": german_name,
                     "original_name": orig_name,
                     "quantity": qty,
-                    "unit": unit
+                    "unit": unit,
+                    "category": category
                 }
             else:
                 aggregated[key]["quantity"] += qty
@@ -322,6 +324,8 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
     for ing in aggregated_ingredients:
         german_name = ing["german_name"]
         orig_name = ing["original_name"]
+        category = ing["category"]
+        quantity = ing["quantity"]
         
         cheapest_price = float('inf')
         cheapest_store = ""
@@ -329,21 +333,22 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
         cheapest_is_sale = False
 
         for store in stores:
-            price_info = find_best_ingredient_price(german_name, store, db)
-            cost = price_info["price"]
-            store_totals[store] += cost
+            price_info = find_best_ingredient_price(german_name, store, db, category=category)
+            unit_price = price_info["price"]
+            total_cost = round(unit_price * quantity, 2)
+            store_totals[store] += total_cost
             
             store_itemized[store].append({
                 "Ingredient (Original)": orig_name,
                 "German Store Match": german_name,
-                "Quantity": f"{ing['quantity']:.1f} {ing['unit']}",
+                "Quantity": f"{quantity:.1f} {ing['unit']}",
                 "Matched Product": price_info["product_name"],
-                "Price (€)": cost,
-                "Price Type": "Sale Offer 🏷️" if price_info["is_on_sale"] else "Regular Price 📌"
+                "Tier / Status": f"{price_info.get('pricing_tier', 'Standard')} {'🏷️' if price_info['is_on_sale'] else '📌'}",
+                "Price (€)": total_cost
             })
 
-            if cost < cheapest_price:
-                cheapest_price = cost
+            if total_cost < cheapest_price:
+                cheapest_price = total_cost
                 cheapest_store = store
                 cheapest_product_name = price_info["product_name"]
                 cheapest_is_sale = price_info["is_on_sale"]
@@ -351,10 +356,10 @@ def calculate_weekly_basket_strategies(aggregated_ingredients, db):
         multi_store_split.append({
             "Original Ingredient": orig_name,
             "German Supermarket Match": german_name,
-            "Quantity": f"{ing['quantity']:.1f} {ing['unit']}",
+            "Quantity": f"{quantity:.1f} {ing['unit']}",
             "Buy At Supermarket": cheapest_store,
             "Matched Product": cheapest_product_name,
-            "Price Type": "Sale Offer 🏷️" if cheapest_is_sale else "Regular Price 📌",
+            "Price Type": "Sale Offer 🏷️" if cheapest_is_sale else "Historical/Baseline 📌",
             "Price (€)": cheapest_price
         })
 
@@ -409,7 +414,7 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
 st.markdown("""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
-    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369)</p>
+    <p class="brand-tagline">Smart Circular Deals & Hierarchical Weekly Meal Optimization (Berlin 10369)</p>
 </div>
 """, unsafe_allow_html=True)
 
