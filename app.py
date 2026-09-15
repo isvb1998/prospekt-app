@@ -6,7 +6,6 @@ import pandas as pd
 import plotly.express as px
 from pypdf import PdfReader
 
-# Attempt pdfplumber import with graceful fallback to pypdf
 try:
     import pdfplumber
     HAS_PDFPLUMBER = True
@@ -145,7 +144,8 @@ UNIT_MAP = {
     "teskefuld": "TL", "spiseskefuld": "EL", "kop": "Tasse", "stk": "Stück", "stk.": "Stück", "fed": "Zehe",
     "teaspoon": "TL", "teaspoons": "TL", "tsp": "TL", "tablespoon": "EL", "tablespoons": "EL", "tbsp": "EL",
     "cup": "Tasse", "cups": "Tasse", "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg",
-    "clove": "Zehe", "cloves": "Zehe", "piece": "Stück", "pieces": "Stück", "pinch": "Prise", "can": "Dose"
+    "clove": "Zehe", "cloves": "Zehe", "piece": "Stück", "pieces": "Stück", "pinch": "Prise", "can": "Dose",
+    "pound": "Pfund", "pounds": "Pfund", "oz": "g"
 }
 
 INGREDIENT_TRANSLATION_MAP = {
@@ -156,7 +156,7 @@ INGREDIENT_TRANSLATION_MAP = {
     "ovos": "Eier", "leite": "Milch", "manteiga": "Butter", "açúcar": "Zucker", "açucar": "Zucker",
     "sal": "Salz", "cebola": "Zwiebeln", "cebolas": "Zwiebeln", "alho": "Knoblauch", "batata": "Kartoffeln",
     "batatas": "Kartoffeln", "carne moída": "Hackfleisch", "carne moida": "Hackfleisch", "arroz": "Reis",
-    "macarrão": "Spaghetti", "espaguete": "Spaghetti",
+    "macarrão": "Spaghetti", "espaguete": "Spaghetti", "ketchup": "Ketchup", "mustard": "Senf",
     "hvedemel": "Weizenmehl", "sukker": "Zucker", "æg": "Eier", "mælk": "Milch", "smør": "Butter",
     "kartofler": "Kartoffeln", "løg": "Zwiebeln", "hvidløg": "Knoblauch", "hakket oksekød": "Hackfleisch",
     "hakkekød": "Hackfleisch",
@@ -166,7 +166,7 @@ INGREDIENT_TRANSLATION_MAP = {
     "onions": "Zwiebeln", "garlic": "Knoblauch", "potatoes": "Kartoffeln", "potato": "Kartoffeln",
     "spaghetti": "Spaghetti", "pasta": "Spaghetti", "strained tomatoes": "Passierte Tomaten",
     "tomato paste": "Tomatenmark", "natural yogurt": "Naturjoghurt", "plain yogurt": "Naturjoghurt",
-    "mozzarella": "Mozzarella", "rice": "Reis"
+    "mozzarella": "Mozzarella", "rice": "Reis", "yellow mustard": "Senf"
 }
 
 EXCLUDE_KEYWORDS = {
@@ -174,6 +174,8 @@ EXCLUDE_KEYWORDS = {
     'ingredients', 'instructions', 'preparo', 'montagem', 'cozimento',
     'g', 'min', 'piece', 'gram', 'milliliter', 'nutrition', 'facts', 'total time'
 }
+
+INSTRUCTION_HEADERS_REGEX = r"^(instructions|preparo|preparação|montagem|cozimento|cooking|vorbereitung|roasting|steps|modo de preparo|fremgangsmåde|zubereitung):"
 
 
 def normalize_unit(unit_str: str) -> str:
@@ -192,63 +194,55 @@ def translate_to_german_grocery(ingredient_raw: str) -> str:
 
 
 def clean_item_name_artifacts(name_str: str) -> str:
-    """Cleans up concatenated artifacts like Gramgarlic -> Garlic, Gramlean -> Lean Beef."""
-    cleaned = re.sub(r"^(gram|grams|grama|gramas|g|ml|kg|tbsp|tsp|cup|cups|piece|pieces|clove|cloves)\s*", "", name_str, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^(gram|grams|grama|gramas|g|ml|kg|tbsp|tsp|cup|cups|piece|pieces|clove|cloves|pound|pounds|oz)\s*", "", name_str, flags=re.IGNORECASE).strip()
     return cleaned if cleaned else name_str.strip()
 
 
 def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
     """
-    Parses recipe text with strict boundary cutoffs, multi-column bullet splitting,
-    and regex cleaning engines.
+    Parses recipe text block cleanly, extracting title and ingredients
+    while stopping hard at instruction sections.
     """
-    # 1. Split text into initial lines
     raw_lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
     if not raw_lines:
         return "Untitled Recipe", []
 
-    title = raw_lines[0].lstrip("#•-*| ").strip()
-    ingredients = []
-    
-    # 2. Extract multi-column bullet delimiters into discrete tokens
-    flattened_entries = []
-    for line in raw_lines[1:]:
-        # Split on common column/bullet delimiters (•, |, *, -)
-        sub_tokens = re.split(r"[•\|\*\-\t]", line)
-        for token in sub_tokens:
-            t_clean = token.strip()
-            if t_clean:
-                flattened_entries.append(t_clean)
-
-    in_ingredients_section = False
-
-    for entry in flattened_entries:
-        entry_lower = entry.lower().strip()
-
-        # 3. STRICT SECTION BOUNDARY CUTOFF
-        # Stop extraction immediately upon encountering instructions, cooking steps, or numbered steps
-        if re.search(r"^(instructions|preparo|preparação|montagem|cooking|vorbereitung|steps|modo de preparo|fremgangsmåde|zubereitung):", entry_lower) or \
-           re.match(r"^(\d+[\.\)]|☑|☐)", entry_lower):
+    # Identify Recipe Title (skip lines starting with numbers or instruction terms)
+    title = "Untitled Recipe"
+    for line in raw_lines:
+        clean_title_line = re.sub(r"^[•\-\*\d\.\)\|]+", "", line).strip()
+        if clean_title_line and not re.match(r"^\d+\s", clean_title_line) and not re.search(INSTRUCTION_HEADERS_REGEX, clean_title_line.lower()):
+            title = clean_title_line
             break
 
-        # Boundary trigger for ingredient headers
-        if re.search(r"^(ingredientes|ingredients|zutaten):", entry_lower):
+    ingredients = []
+    in_ingredients_section = False
+
+    for line in raw_lines:
+        clean_lower = line.lower().strip()
+
+        # HARD STOP AT INSTRUCTIONS (PREVENT LEAKAGE)
+        if re.search(INSTRUCTION_HEADERS_REGEX, clean_lower) or re.match(r"^(\d+[\.\)]|☑|☐|①|②|③)", clean_lower):
+            break
+
+        # START RECORDING AFTER INGREDIENTS HEADER
+        if re.search(r"^(ingredientes|ingredients|zutaten):", clean_lower):
             in_ingredients_section = True
             continue
 
-        if not in_ingredients_section and not any(kw in entry_lower for kw in EXCLUDE_KEYWORDS):
+        if not in_ingredients_section and not any(kw in clean_lower for kw in EXCLUDE_KEYWORDS):
             in_ingredients_section = True
 
         if in_ingredients_section:
-            if entry_lower in EXCLUDE_KEYWORDS or any(entry_lower.startswith(kw) for kw in ['prep time', 'servings', 'calories', 'total time']):
+            if clean_lower in EXCLUDE_KEYWORDS or any(clean_lower.startswith(kw) for kw in ['prep time', 'servings', 'calories', 'total time']):
                 continue
 
-            cleaned_entry = re.sub(r"^[•\-\*\d\.\)\|]+", "", entry).strip()
-            if not cleaned_entry or cleaned_entry.lower() in EXCLUDE_KEYWORDS:
+            # Strip bullet symbols (•, |, *, ☑) and numbers
+            cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line).strip()
+            if not cleaned_line or cleaned_line.lower() in EXCLUDE_KEYWORDS:
                 continue
 
-            # 4. REGEX INGREDIENT EXTRACTION ENGINE
-            match = re.match(r"^([\d\.,/]+)\s*([a-zA-ZáàâãéèêíïóôõöúçÁÀÂÃÉÈÍÏÓÔÕÖÚÇ\.\s]+?)\s+(de\s+)?(.+)$", cleaned_entry, re.IGNORECASE)
+            match = re.match(r"^([\d\.,/]+)\s*([a-zA-ZáàâãéèêíïóôõöúçÁÀÂÃÉÈÍÏÓÔÕÖÚÇ\.\s]+?)\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
             
             if match:
                 qty_str, unit_str, _, name_str = match.groups()
@@ -274,8 +268,7 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
                     "unit": unit
                 })
             else:
-                cleaned_name = clean_item_name_artifacts(cleaned_entry)
-                # Only save if a valid item string remains
+                cleaned_name = clean_item_name_artifacts(cleaned_line)
                 if len(cleaned_name) > 1:
                     german_match_name = translate_to_german_grocery(cleaned_name)
                     ingredients.append({
@@ -290,37 +283,51 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
 
 def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
     """
-    Layout-aware PDF parser utilizing pdfplumber (with fallback to pypdf).
-    Handles multi-column pages cleanly.
+    SPATIAL TWO-COLUMN PARSING ENGINE (pdfplumber)
+    Splits page into Left (0 to width/2) and Right (width/2 to width) columns
+    to prevent horizontal line mashing across PDF recipe columns.
     """
-    full_text = ""
-    
+    recipe_text_blocks = []
+
     if HAS_PDFPLUMBER:
         try:
             with pdfplumber.open(file_stream) as pdf:
                 for page in pdf.pages:
-                    # Layout-aware text extraction
-                    text = page.extract_text(layout=True)
-                    if text:
-                        full_text += text + "\n---PAGE---\n"
+                    w = page.width
+                    h = page.height
+                    
+                    # Left Column Box: (x0=0, top=0, x1=w/2, bottom=h)
+                    left_bbox = (0, 0, w / 2, h)
+                    # Right Column Box: (x0=w/2, top=0, x1=w, bottom=h)
+                    right_bbox = (w / 2, 0, w, h)
+
+                    left_crop = page.crop(left_bbox)
+                    right_crop = page.crop(right_bbox)
+
+                    left_text = left_crop.extract_text(layout=False) or ""
+                    right_text = right_crop.extract_text(layout=False) or ""
+
+                    # Combine Left Column top-to-bottom, then Right Column top-to-bottom
+                    page_combined = left_text + "\n" + right_text
+                    if page_combined.strip():
+                        recipe_text_blocks.append(page_combined)
         except Exception:
             file_stream.seek(0)
             reader = PdfReader(file_stream)
             for page in reader.pages:
                 text = page.extract_text()
                 if text:
-                    full_text += text + "\n---PAGE---\n"
+                    recipe_text_blocks.append(text)
     else:
         reader = PdfReader(file_stream)
         for page in reader.pages:
             text = page.extract_text()
             if text:
-                full_text += text + "\n---PAGE---\n"
+                recipe_text_blocks.append(text)
 
-    raw_recipes = [r.strip() for r in full_text.split("---PAGE---") if r.strip()]
     parsed_batch = []
-    for raw in raw_recipes:
-        t, ing = parse_raw_recipe_ingredients_only(raw)
+    for raw_block in recipe_text_blocks:
+        t, ing = parse_raw_recipe_ingredients_only(raw_block)
         if ing:
             parsed_batch.append((t, ing))
     return parsed_batch
@@ -623,7 +630,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (DUPLICATE DETECTION & STATEFUL BULK ACTIONS)
+# TAB 3: RECIPE MANAGER (SPATIAL PDF PARSING & BULK ACTIONS)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -790,11 +797,11 @@ with tab3:
             db.close()
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 2: STREAMLINED IMPORT (LAYOUT-AWARE PDF & BOUNDARY PARSER)
+    # SUB-TAB 2: STREAMLINED IMPORT (SPATIAL PDF PARSING & BOUNDARY PARSER)
     # -------------------------------------------------------------------------
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
-        st.caption("Layout-aware PDF parsing + boundary cutoff rules. Filters out instructions and metadata.")
+        st.caption("pdfplumber spatial crop parsing + strict instruction boundary rules.")
         db = get_db()
 
         try:
