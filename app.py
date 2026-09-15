@@ -563,7 +563,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (CHECKBOX BULK DELETE & INLINE ACTIONS)
+# TAB 3: RECIPE MANAGER (STATEFUL CHECKBOX BULK DELETE & SEARCH)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -574,7 +574,7 @@ with tab3:
     ])
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES LIST WITH CHECKBOX-BASED BULK DELETION
+    # SUB-TAB 1: SAVED RECIPES LIST WITH SEARCH & MASTER SELECT ALL
     # -------------------------------------------------------------------------
     with crud_subtab1:
         st.subheader("Saved Recipes")
@@ -585,77 +585,113 @@ with tab3:
             if not recipes_list:
                 st.info("No saved recipes found. Add or import recipes using the next tab.")
             else:
-                # Top Select All Toggle
-                select_all = st.checkbox("Select All / Deselect All", key="cb_select_all_recipes")
+                # 1. Real-time Search Bar
+                search_query = st.text_input("🔍 Search recipes by title or ingredient...", key="recipe_search_input").strip().lower()
 
-                # Collect checked recipe IDs
-                checked_ids = []
+                # Filter recipes based on title or ingredients
+                if search_query:
+                    filtered_recipes = []
+                    for r in recipes_list:
+                        title_match = search_query in r.title.lower()
+                        ing_match = any(
+                            search_query in ing.get('original_name', '').lower() or 
+                            search_query in ing.get('name', '').lower() 
+                            for ing in r.ingredients
+                        )
+                        if title_match or ing_match:
+                            filtered_recipes.append(r)
+                else:
+                    filtered_recipes = recipes_list
 
-                # Render Bulk Action Bar if items selected
+                # Initialize state for recipe selection
+                for r in filtered_recipes:
+                    key = f"rec_chk_{r.id}"
+                    if key not in st.session_state:
+                        st.session_state[key] = False
+
+                # Master Select All Callback
+                def sync_master_select():
+                    master_val = st.session_state.get("select_all_master", False)
+                    for r in filtered_recipes:
+                        st.session_state[f"rec_chk_{r.id}"] = master_val
+
+                col_master, col_spacer = st.columns([0.4, 0.6])
+                with col_master:
+                    st.checkbox(
+                        "Select All / Deselect All",
+                        key="select_all_master",
+                        on_change=sync_master_select
+                    )
+
+                # Track checked IDs
+                checked_ids = [r.id for r in filtered_recipes if st.session_state.get(f"rec_chk_{r.id}", False)]
+
+                # Sticky Action Bar for Bulk Delete
                 placeholder_bulk_bar = st.empty()
 
                 st.divider()
 
-                for r in recipes_list:
-                    c_chk, c_title, c_edit = st.columns([0.06, 0.84, 0.10])
+                if not filtered_recipes:
+                    st.warning(f"No recipes matching '{search_query}'.")
+                else:
+                    for r in filtered_recipes:
+                        c_chk, c_title, c_edit = st.columns([0.06, 0.82, 0.12])
 
-                    with c_chk:
-                        is_checked = st.checkbox("", value=select_all, key=f"rec_chk_{r.id}")
-                        if is_checked:
-                            checked_ids.append(r.id)
+                        with c_chk:
+                            st.checkbox("", key=f"rec_chk_{r.id}")
 
-                    with c_title:
-                        with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
-                            st.write("**Ingredients List:**")
-                            for ing in r.ingredients:
-                                orig = ing.get('original_name', ing['name'])
-                                st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
-
-                    with c_edit:
-                        with st.popover("✏️ Edit"):
-                            st.write(f"**Edit Recipe: {r.title}**")
-                            with st.form(key=f"inline_edit_form_{r.id}"):
-                                new_title = st.text_input("Recipe Title", value=r.title)
-                                
-                                ing_lines = []
+                        with c_title:
+                            with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
+                                st.write("**Ingredients List:**")
                                 for ing in r.ingredients:
                                     orig = ing.get('original_name', ing['name'])
-                                    ing_lines.append(f"{orig}, {ing['quantity']}, {ing['unit']}")
-                                
-                                new_ing_raw = st.text_area(
-                                    "Ingredients (Name, Quantity, Unit — 1 per line)",
-                                    value="\n".join(ing_lines),
-                                    height=140
-                                )
+                                    st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
 
-                                if st.form_submit_button("Save Changes"):
-                                    db_rec = db.query(Recipe).filter(Recipe.id == r.id).first()
-                                    if db_rec:
-                                        db_rec.title = new_title
-                                        
-                                        updated_ingredients = []
-                                        for line in new_ing_raw.strip().split("\n"):
-                                            if line.strip():
-                                                parts = [p.strip() for p in line.split(",")]
-                                                if len(parts) >= 3:
-                                                    try:
-                                                        qty = float(parts[1])
-                                                    except ValueError:
-                                                        qty = 1.0
-                                                    
-                                                    raw_name = parts[0]
-                                                    mapped_name = translate_to_german_grocery(raw_name)
-                                                    updated_ingredients.append({
-                                                        "name": mapped_name,
-                                                        "original_name": raw_name,
-                                                        "quantity": qty,
-                                                        "unit": normalize_unit(parts[2])
-                                                    })
-                                        
-                                        db_rec.ingredients = updated_ingredients
-                                        db.commit()
-                                        st.toast(f"Updated '{new_title}'!")
-                                        st.rerun()
+                        with c_edit:
+                            with st.popover("[ Edit ]"):
+                                st.write(f"**Edit Recipe: {r.title}**")
+                                with st.form(key=f"inline_edit_form_{r.id}"):
+                                    new_title = st.text_input("Recipe Title", value=r.title)
+                                    
+                                    ing_lines = []
+                                    for ing in r.ingredients:
+                                        orig = ing.get('original_name', ing['name'])
+                                        ing_lines.append(f"{orig}, {ing['quantity']}, {ing['unit']}")
+                                    
+                                    new_ing_raw = st.text_area(
+                                        "Ingredients (Name, Quantity, Unit — 1 per line)",
+                                        value="\n".join(ing_lines),
+                                        height=140
+                                    )
+
+                                    if st.form_submit_button("Save Changes"):
+                                        db_rec = db.query(Recipe).filter(Recipe.id == r.id).first()
+                                        if db_rec:
+                                            db_rec.title = new_title
+                                            
+                                            updated_ingredients = []
+                                            for line in new_ing_raw.strip().split("\n"):
+                                                if line.strip():
+                                                    parts = [p.strip() for p in line.split(",")]
+                                                    if len(parts) >= 3:
+                                                        try:
+                                                            qty = float(parts[1])
+                                                        except ValueError:
+                                                            qty = 1.0
+                                                        
+                                                        raw_name = parts[0]
+                                                        mapped_name = translate_to_german_grocery(raw_name)
+                                                        updated_ingredients.append({
+                                                            "name": mapped_name,
+                                                            "original_name": raw_name,
+                                                            "quantity": qty,
+                                                            "unit": normalize_unit(parts[2])
+                                                        })
+                                            
+                                            db_rec.ingredients = updated_ingredients
+                                            db.commit()
+                                            st.toast(f"Updated '{new_title}'!")
+                                            st.rerun()
 
                 # Dynamic Sticky Bulk Delete Header Bar
                 if checked_ids:
@@ -665,9 +701,15 @@ with tab3:
                             <span style="color: #fca5a5; font-weight: 600;">⚠️ {len(checked_ids)} recipe(s) selected for removal</span>
                         </div>
                         """, unsafe_allow_html=True)
-                        if st.button(f"🗑️ Delete Selected Recipes ({len(checked_ids)})", type="primary", key="btn_exec_bulk_delete"):
+                        if st.button(f"Delete Selected ({len(checked_ids)})", type="primary", key="btn_exec_bulk_delete"):
                             db.query(Recipe).filter(Recipe.id.in_(checked_ids)).delete(synchronize_session=False)
                             db.commit()
+                            
+                            # Reset checkboxes state
+                            for cid in checked_ids:
+                                st.session_state[f"rec_chk_{cid}"] = False
+                            st.session_state["select_all_master"] = False
+                            
                             st.toast(f"Deleted {len(checked_ids)} recipes!")
                             st.rerun()
 
