@@ -1,7 +1,7 @@
 import datetime
 from sqlalchemy.orm import Session
 from rapidfuzz import process, fuzz
-from database import SessionLocal, Offer, PriceHistory, UserLearnedMapping
+from database import SessionLocal, Offer, StandardBaselinePrice, PriceHistory, UserLearnedMapping
 
 STATIC_SYNONYM_MAP = {
     "carne moída": "Rinderhackfleisch",
@@ -77,12 +77,6 @@ def strip_ingredient_descriptors(raw_name: str) -> str:
     return result if result else cleaned
 
 def normalize_quantity_and_units(quantity: float, unit: str, item_name: str) -> tuple[float, str]:
-    """
-    ROOT CAUSE FIX: Unit Type Check for Quantities & Discrete Conversions.
-    - Converts grams/milliliters to kg/L.
-    - Converts discrete item counts (cloves, pieces, eggs) to equivalent weight fractions
-      so they don't multiply raw piece counts directly against bulk kilogram prices.
-    """
     u_lower = unit.strip().lower()
     name_lower = item_name.strip().lower()
 
@@ -91,20 +85,15 @@ def normalize_quantity_and_units(quantity: float, unit: str, item_name: str) -> 
     elif u_lower in ["ml", "milliliter", "milliliters"]:
         return quantity / 1000.0, "L"
     elif u_lower in ["zehe", "zehen", "clove", "cloves"]:
-        # 1 garlic clove ≈ 4 grams (0.004 kg)
         return quantity * 0.004, "kg"
     elif u_lower in ["stück", "piece", "pieces", "stk", "stk."]:
         if "ei" in name_lower or "egg" in name_lower:
-            # 1 egg ≈ 60 grams (0.06 kg)
             return quantity * 0.06, "kg"
         elif "zwiebel" in name_lower or "onion" in name_lower:
-            # 1 medium onion ≈ 150 grams (0.15 kg)
             return quantity * 0.15, "kg"
         elif "knoblauch" in name_lower or "garlic" in name_lower:
-            # 1 bulb / piece of garlic ≈ 50 grams (0.05 kg)
             return quantity * 0.05, "kg"
         else:
-            # Generic discrete item fallback (treated as ~100g unit equivalent)
             return quantity * 0.10, "kg"
     else:
         return quantity, u_lower
@@ -163,16 +152,15 @@ def map_ingredient_to_german_sku(raw_name: str, db: Session = None) -> str:
 
     return raw_name.strip().title()
 
-def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, category: str = "Vorrat", quantity: float = 1.0, unit: str = "Stück", **kwargs) -> dict:
+def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, category: str = "Vorrat", quantity: float = 1.0, unit: str = "Stück", planning_week: str = "Current Week", **kwargs) -> dict:
     """
-    Tiered Hierarchical Pricing Strategy with Unit Standardization, Discrete Count Weight Conversions,
-    and Strict Sanity Price Caps.
+    Timing-aware pricing resolver supporting Current Week active sales vs Next Week Advance Baselines.
     """
     sku_lower = german_sku.strip().lower()
     store_lower = store_name.strip().lower()
-    today_str = datetime.date.today().isoformat()
+    today = datetime.date.today()
+    today_str = today.isoformat()
 
-    # Normalize grams, milliliters, and discrete counts (cloves, pieces) into base metric weights
     scaled_qty, _ = normalize_quantity_and_units(quantity, unit, german_sku)
 
     unit_price = 0.0
@@ -180,44 +168,58 @@ def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, ca
     is_sale = False
     matched_product_name = german_sku
 
-    # Tier 1: Current Prospekt Price Priority
-    active_offer = db.query(Offer).filter(
-        Offer.supermarket_name.collate("NOCASE") == store_lower,
-        Offer.product_name.collate("NOCASE").contains(sku_lower),
-        Offer.valid_from <= today_str,
-        Offer.valid_to >= today_str
-    ).first()
+    if planning_week == "Current Week":
+        # Check active discount offers valid today
+        active_offer = db.query(Offer).filter(
+            Offer.supermarket_name.collate("NOCASE") == store_lower,
+            Offer.product_name.collate("NOCASE").contains(sku_lower),
+            Offer.valid_from <= today_str,
+            Offer.valid_to >= today_str
+        ).first()
 
-    if active_offer:
-        unit_price = float(active_offer.offer_price)
-        matched_product_name = active_offer.product_name
-        is_sale = True
-        pricing_tier = "Tier 1: Current Prospekt"
-    else:
-        # Tier 2: Most Recent Historical Price
-        recent_record = db.query(PriceHistory).filter(
-            PriceHistory.supermarket_name.collate("NOCASE") == store_lower,
-            PriceHistory.product_name.collate("NOCASE").contains(sku_lower)
-        ).order_by(PriceHistory.recorded_date.desc()).first()
-
-        if recent_record and recent_record.price:
-            unit_price = float(recent_record.price)
-            matched_product_name = recent_record.product_name
-            pricing_tier = "Tier 2: Recent History"
+        if active_offer:
+            unit_price = float(active_offer.offer_price)
+            matched_product_name = active_offer.product_name
+            is_sale = True
+            pricing_tier = "Tier 1: Current Prospekt Offer"
         else:
-            # Tier 3: Category Baseline Average
+            # Fall back to standard baseline or store price history
+            baseline_record = db.query(StandardBaselinePrice).filter(
+                StandardBaselinePrice.supermarket_name.collate("NOCASE") == store_lower,
+                StandardBaselinePrice.product_name.collate("NOCASE").contains(sku_lower)
+            ).first()
+
+            if baseline_record and baseline_record.price:
+                unit_price = float(baseline_record.price)
+                matched_product_name = baseline_record.product_name
+                pricing_tier = "Tier 2: Standard Baseline"
+            else:
+                unit_price = get_category_baseline(category)
+                pricing_tier = "Tier 3: Category Baseline"
+
+    else:
+        # Next Week Selected: Strict adherence to Advance Prospekt Baseline Indexing (Normal Pricing)
+        advance_baseline = db.query(StandardBaselinePrice).filter(
+            StandardBaselinePrice.supermarket_name.collate("NOCASE") == store_lower,
+            StandardBaselinePrice.product_name.collate("NOCASE").contains(sku_lower)
+        ).first()
+
+        if advance_baseline and advance_baseline.price:
+            unit_price = float(advance_baseline.price)
+            matched_product_name = advance_baseline.product_name
+            pricing_tier = "Next Week: Advance Baseline"
+        else:
             unit_price = get_category_baseline(category)
-            pricing_tier = "Tier 3: Category Baseline"
+            pricing_tier = "Next Week: Category Baseline Fallback"
 
     line_cost = unit_price * scaled_qty
 
-    # ROOT CAUSE FIX 2: Sanity Check Guard (€10 limit per normal ingredient line unless bulk meat)
+    # Sanity check guard
     is_bulk_meat = "fleisch" in sku_lower or "hähnchen" in sku_lower or "beef" in sku_lower or "chicken" in sku_lower
     max_limit = 25.0 if is_bulk_meat else 10.0
 
     if line_cost > max_limit:
-        print(f"⚠️ Price Guard Triggered: Ingredient '{german_sku}' calculated €{line_cost:.2f}. Applying safety cap.")
-        line_cost = 1.50  # Sensible default total cost for minor ingredients like garlic cloves or spices
+        line_cost = 1.50
 
     return {
         "product_name": matched_product_name,
