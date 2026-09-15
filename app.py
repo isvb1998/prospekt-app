@@ -67,7 +67,6 @@ INGREDIENT_TRANSLATION_MAP = {
     "mozzarella": "Mozzarella", "rice": "Reis"
 }
 
-# Words and headers to explicitly ignore during PDF extraction
 EXCLUDE_KEYWORDS = {
     'prep time', 'servings', 'calories', 'protein', 'carbs', 'fat',
     'ingredients', 'instructions', 'preparo', 'montagem', 'cozimento',
@@ -91,34 +90,28 @@ def translate_to_german_grocery(ingredient_raw: str) -> str:
 
 
 def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
-    """Extracts title and mapped ingredients strictly under the Ingredients header and before Instructions."""
     lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
     if not lines:
         return "Untitled Recipe", []
 
     title = lines[0].lstrip("#•-* ").strip()
     ingredients = []
-    
     in_ingredients_section = False
 
     for line in lines[1:]:
         clean_lower = line.lower().strip()
         
-        # Check if we hit an instruction section to terminate extraction
         if re.search(r"^(modo de preparo|instruções|instructions|fremgangsmåde|zubereitung|steps|preparo|montagem|cozimento):", clean_lower):
             break
 
-        # Check for ingredient section entry
-        if re.search(r"^(ingredientes|ingredients|zutasaten):", clean_lower):
+        if re.search(r"^(ingredientes|ingredients|zutaten):", clean_lower):
             in_ingredients_section = True
             continue
 
-        # If a header hasn't explicitly triggered, infer ingredient section starting after title
         if not in_ingredients_section and not any(kw in clean_lower for kw in EXCLUDE_KEYWORDS):
             in_ingredients_section = True
 
         if in_ingredients_section:
-            # Skip metadata and standalone header lines matching exclude keywords
             if clean_lower in EXCLUDE_KEYWORDS or any(clean_lower.startswith(kw) for kw in ['prep time', 'servings', 'calories', 'total time']):
                 continue
 
@@ -163,7 +156,6 @@ def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
 
 
 def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
-    """Parses multi-page PDFs, filtering metadata headers and instructions."""
     reader = PdfReader(file_stream)
     full_text = ""
     for page in reader.pages:
@@ -470,18 +462,18 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (INLINE QUICK MANAGEMENT & BATCH DELETE)
+# TAB 3: RECIPE MANAGER (MULTISELECT BULK DELETE & INLINE ACTIONS)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
     
     crud_subtab1, crud_subtab2 = st.tabs([
-        "📋 Saved Recipes List & Batch Delete",
+        "📋 Saved Recipes List & Bulk Delete",
         "📥 Add / Batch Import Recipes"
     ])
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES LIST WITH BATCH DELETION
+    # SUB-TAB 1: SAVED RECIPES LIST & MULTISELECT BULK DELETE
     # -------------------------------------------------------------------------
     with crud_subtab1:
         st.subheader("Saved Recipe Collection")
@@ -492,25 +484,31 @@ with tab3:
             if not recipes_list:
                 st.info("No saved recipes found. Add or import recipes using the next tab.")
             else:
-                # Top Batch Selection Controls
-                col_sel_all, col_batch_del = st.columns([0.6, 0.4])
-                
-                with col_sel_all:
-                    select_all = st.checkbox("Select All / Deselect All Recipes", key="cb_select_all")
+                recipe_map = {f"{r.title} (ID: {r.id})": r.id for r in recipes_list}
 
-                # Maintain selected IDs state
-                selected_recipe_ids = []
+                # Reliable Multiselect Bulk Delete Container
+                with st.expander("🗑️ Bulk Delete Recipes", expanded=False):
+                    selected_to_delete = st.multiselect(
+                        "Select Recipes to Delete in Bulk:",
+                        options=list(recipe_map.keys()),
+                        key="multiselect_bulk_delete"
+                    )
+
+                    if selected_to_delete:
+                        if st.button(f"🗑️ Permanently Delete {len(selected_to_delete)} Selected Recipe(s)", type="primary"):
+                            ids_to_del = [recipe_map[title] for title in selected_to_delete]
+                            db.query(Recipe).filter(Recipe.id.in_(ids_to_del)).delete(synchronize_session=False)
+                            db.commit()
+                            
+                            st.session_state["multiselect_bulk_delete"] = []
+                            st.success(f"Successfully deleted {len(ids_to_del)} recipe(s)!")
+                            st.rerun()
 
                 st.divider()
 
+                # List view with inline single-recipe edit & delete icons
                 for r in recipes_list:
-                    # Individual row layout: Checkbox + Title/Expander + Edit Icon + Delete Icon
-                    c_chk, c_title, c_edit, c_del = st.columns([0.06, 0.76, 0.09, 0.09])
-
-                    with c_chk:
-                        is_checked = st.checkbox("", value=select_all, key=f"chk_rec_{r.id}")
-                        if is_checked:
-                            selected_recipe_ids.append(r.id)
+                    c_title, c_edit, c_del = st.columns([0.82, 0.09, 0.09])
 
                     with c_title:
                         with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
@@ -573,18 +571,6 @@ with tab3:
                                 db.commit()
                                 st.toast(f"Deleted recipe '{r.title}'")
                                 st.rerun()
-
-                # Batch Action Bar at Top/Bottom
-                with col_batch_del:
-                    if selected_recipe_ids:
-                        if st.button(f"🗑️ Delete Selected Recipes ({len(selected_recipe_ids)})", type="primary"):
-                            for d_id in selected_recipe_ids:
-                                db_rec = db.query(Recipe).filter(Recipe.id == d_id).first()
-                                if db_rec:
-                                    db.delete(db_rec)
-                            db.commit()
-                            st.toast(f"Batch deleted {len(selected_recipe_ids)} recipes!")
-                            st.rerun()
 
         finally:
             db.close()
