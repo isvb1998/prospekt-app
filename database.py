@@ -1,4 +1,3 @@
-import json
 import sqlite3
 from sqlalchemy import create_engine, Column, Integer, String, Float, Text, JSON, Boolean, ForeignKey, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -20,10 +19,20 @@ class Offer(Base):
     id = Column(Integer, primary_key=True, index=True)
     supermarket_name = Column(String, index=True)
     product_name = Column(String, index=True)
-    category = Column(String, index=True)
-    current_price = Column(Float)
-    original_price = Column(Float)
-    is_on_sale = Column(Boolean, default=True)
+    category = Column(String, nullable=True)
+    offer_price = Column(Float, nullable=False)
+    original_price = Column(Float, nullable=True)
+    valid_from = Column(String, nullable=True)
+    valid_to = Column(String, nullable=True)
+
+    # Hybrid properties for backward compatibility with UI components expecting older field names
+    @property
+    def current_price(self):
+        return self.offer_price
+
+    @property
+    def is_on_sale(self):
+        return True
 
 
 class Recipe(Base):
@@ -36,7 +45,6 @@ class Recipe(Base):
     servings = Column(Integer, default=1)
     ingredients = Column(JSON, default=list)
 
-    # Optional relational mapping if using dedicated Ingredient objects
     ingredient_objects = relationship("Ingredient", back_populates="recipe", cascade="all, delete-orphan")
 
 
@@ -45,11 +53,11 @@ class Ingredient(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     recipe_id = Column(Integer, ForeignKey("recipes.id"), nullable=True)
-    name = Column(String, index=True)  # Original ingredient name
+    name = Column(String, index=True)
     quantity = Column(Float, default=1.0)
     unit = Column(String, default="Stück")
-    mapped_german_item = Column(String, index=True, nullable=True)  # Normalized German SKU match
-    generic_category = Column(String, nullable=True, default="Vorrat")  # Molkerei, Fleisch, etc.
+    mapped_german_item = Column(String, index=True, nullable=True)
+    generic_category = Column(String, nullable=True, default="Vorrat")
 
     recipe = relationship("Recipe", back_populates="ingredient_objects")
 
@@ -67,8 +75,20 @@ class PriceHistory(Base):
 def apply_migrations():
     """Safely adds missing columns to existing SQLite database tables without data loss."""
     inspector = inspect(engine)
-    
-    # Check if 'ingredients' table exists and lacks 'generic_category'
+
+    if inspector.has_table("offers"):
+        offer_cols = [col["name"] for col in inspector.get_columns("offers")]
+        with engine.begin() as conn:
+            if "offer_price" not in offer_cols and "current_price" in offer_cols:
+                conn.execute(text("ALTER TABLE offers RENAME COLUMN current_price TO offer_price;"))
+            elif "offer_price" not in offer_cols:
+                conn.execute(text("ALTER TABLE offers ADD COLUMN offer_price FLOAT DEFAULT 0.0;"))
+            
+            if "valid_from" not in offer_cols:
+                conn.execute(text("ALTER TABLE offers ADD COLUMN valid_from TEXT;"))
+            if "valid_to" not in offer_cols:
+                conn.execute(text("ALTER TABLE offers ADD COLUMN valid_to TEXT;"))
+
     if inspector.has_table("ingredients"):
         columns = [col["name"] for col in inspector.get_columns("ingredients")]
         with engine.begin() as conn:
@@ -77,7 +97,6 @@ def apply_migrations():
             if "mapped_german_item" not in columns:
                 conn.execute(text("ALTER TABLE ingredients ADD COLUMN mapped_german_item TEXT;"))
 
-    # Check if 'recipes' table lacks 'category' or 'servings'
     if inspector.has_table("recipes"):
         recipe_cols = [col["name"] for col in inspector.get_columns("recipes")]
         with engine.begin() as conn:
