@@ -48,12 +48,11 @@ STATIC_SYNONYM_MAP = {
     "garlic": "Knoblauch"
 }
 
-# Category baselines (per kg or per L) to keep weekly baskets between €40 and €100
 CATEGORY_BASELINES = {
-    "Vorrat": 1.50,         # ~€1.50/kg for dry goods / flour / rice
-    "Molkerei": 1.20,       # ~€1.20/L for dairy / milk / yogurt
-    "Fleisch": 8.00,        # ~€8.00/kg for meat / beef / poultry
-    "Obst & Gemüse": 2.00,  # ~€2.00/kg for produce
+    "Vorrat": 1.50,
+    "Molkerei": 1.20,
+    "Fleisch": 8.00,
+    "Obst & Gemüse": 2.00,
     "Feinkost": 3.50,
     "General": 2.00
 }
@@ -125,10 +124,7 @@ def map_ingredient_to_german_sku(raw_name: str, db: Session = None) -> str:
 
 def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, category: str = "Vorrat", quantity: float = 1.0, unit: str = "Stück") -> dict:
     """
-    Pricing resolution waterfall:
-    1. Active Prospekt offer matching today's date.
-    2. Most recent historical price from price_history.
-    3. Category baseline average.
+    Tiered Hierarchical Pricing Strategy with Unit Standardization and Sanity Price Caps.
     """
     sku_lower = german_sku.strip().lower()
     store_lower = store_name.strip().lower()
@@ -171,7 +167,7 @@ def find_best_ingredient_price(german_sku: str, store_name: str, db: Session, ca
 
     line_cost = unit_price * scaled_qty
 
-    # Safety price cap guard against calculation blowouts
+    # Safety price cap guard against calculation blowouts (>€50 per single ingredient line)
     if line_cost > 50.0:
         line_cost = 2.00
 
