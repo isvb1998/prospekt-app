@@ -25,12 +25,11 @@ def get_historical_fallback_price(german_sku: str, store_name: str, db: Session)
     """
     Calculates realistic baseline pricing using historical time-series data:
     - For staples: Queries historical records from the past 6 months and returns the median price.
-    - For specialty/seasonal items: Queries the last 5 to 10 historical mentions and returns the average/median.
+    - For specialty/seasonal items: Queries the last 5 to 10 historical mentions and returns the median.
     """
     sku_lower = german_sku.strip().lower()
     store_lower = store_name.strip().lower()
 
-    # Determine window constraints based on article type
     is_staple = is_staple_article(sku_lower)
     
     query = db.query(PriceHistory).filter(
@@ -39,7 +38,7 @@ def get_historical_fallback_price(german_sku: str, store_name: str, db: Session)
     )
 
     if is_staple:
-        # Past 6 months window relative to current execution date (September 2026)
+        # Past 6 months window relative to current execution date
         six_months_ago = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
         query = query.filter(PriceHistory.recorded_date >= six_months_ago)
         records = query.order_by(PriceHistory.recorded_date.desc()).all()
@@ -50,10 +49,9 @@ def get_historical_fallback_price(german_sku: str, store_name: str, db: Session)
     if records:
         prices = [r.price for r in records if r.price is not None and r.price > 0]
         if prices:
-            # Use median to protect against promotional price skewing
             return round(statistics.median(prices), 2)
 
-    # Secondary fallback: check general brand/store history without strict date filters
+    # Fallback: check general brand/store history without strict date filters
     fallback_records = db.query(PriceHistory).filter(
         PriceHistory.product_name.collate("NOCASE").contains(sku_lower)
     ).order_by(PriceHistory.recorded_date.desc()).limit(5).all()
@@ -63,12 +61,11 @@ def get_historical_fallback_price(german_sku: str, store_name: str, db: Session)
         if fallback_prices:
             return round(statistics.median(fallback_prices), 2)
 
-    # Ultimate default baseline if zero historical logs exist in database
     return 1.49
 
 
 def log_price_history_entry(product_name: str, supermarket_name: str, price: float, recorded_date: str, db: Session):
-    """Safely logs a new price data point into the `price_history` archive table."""
+    """Safely logs a new price data point into the price_history archive table."""
     try:
         existing = db.query(PriceHistory).filter(
             PriceHistory.product_name.collate("NOCASE") == product_name.strip(),
