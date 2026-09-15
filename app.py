@@ -71,21 +71,9 @@ def check_and_seed_on_startup():
 
 check_and_seed_on_startup()
 
-# -----------------------------------------------------------------------------
-# FEATURE 1: WEEKLY PLAN TIMING TOGGLE (UI / STATE)
-# -----------------------------------------------------------------------------
+# Initialize planning target state globally if not present
 if "planning_week" not in st.session_state:
     st.session_state.planning_week = "Current Week 🟢"
-
-st.sidebar.markdown("### ⚙️ Planning Parameters")
-st.session_state.planning_week = st.sidebar.radio(
-    "📅 Planning Target:",
-    ["Current Week 🟢", "Next Week ⏭️"],
-    index=0 if st.session_state.planning_week == "Current Week 🟢" else 1,
-    help="Toggle between active current week promotions and advance normal baseline pricing for next week."
-)
-
-planning_target = "Current Week" if "Current" in st.session_state.planning_week else "Next Week"
 
 st.markdown("""
 <style>
@@ -265,10 +253,10 @@ def calculate_cheapest_recipes(recipes, db, planning_week="Current Week", limit=
     evaluated_recipes.sort(key=lambda x: (x["cheapest_cost"], -x["sale_count"]))
     return evaluated_recipes[:limit]
 
-st.markdown(f"""
+st.markdown("""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
-    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369) — Mode: <b>{st.session_state.planning_week}</b></p>
+    <p class="brand-tagline">Smart Circular Deals & Weekly Meal Optimization (Berlin 10369)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -303,8 +291,26 @@ with tab1:
     finally:
         db.close()
 
+# -----------------------------------------------------------------------------
+# WEEKLY MEAL PLANNER TAB WITH INTEGRATED PLANNING TARGET TOGGLE
+# -----------------------------------------------------------------------------
 with tab2:
-    st.header(f"Weekly Meal Planner & Basket Optimization ({planning_target})")
+    st.header("Weekly Meal Planner & Basket Optimization")
+    
+    # Clean layout integration: Horizontal selector at the top of Tab 2
+    st.markdown("### ⚙️ Planning Target Selection")
+    st.session_state.planning_week = st.radio(
+        "Planning Target:",
+        ["Current Week 🟢", "Next Week ⏭️"],
+        index=0 if st.session_state.planning_week == "Current Week 🟢" else 1,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    
+    planning_target = "Current Week" if "Current" in st.session_state.planning_week else "Next Week"
+    st.info(f"Active Pricing Mode: **{planning_target}**")
+    st.divider()
+
     db = get_db()
     try:
         all_recipes = load_cached_recipes()
@@ -390,9 +396,6 @@ with tab3:
     finally:
         db.close()
 
-# -----------------------------------------------------------------------------
-# FEATURE 2: RECEIPT UPLOAD & PRICE LOGGING TAB
-# -----------------------------------------------------------------------------
 with tab4:
     st.header("🧾 Supermarket Receipt Upload & Price Logger")
     st.caption("Upload a receipt image or PDF to extract item prices via OCR and update your historical price database automatically.")
