@@ -1,6 +1,6 @@
 import json
 from datetime import date, timedelta
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, Boolean, Text, ForeignKey, Array
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, Boolean, Text, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 DATABASE_URL = "sqlite:///prospekt_optimizer.db"
