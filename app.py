@@ -1,16 +1,15 @@
 import re
-import io
 from collections import Counter
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from pypdf import PdfReader
 
+# Recipe Scraper for Chefkoch and standard cooking sites
 try:
-    import pdfplumber
-    HAS_PDFPLUMBER = True
+    from recipe_scrapers import scrape_me
+    HAS_RECIPE_SCRAPERS = True
 except ImportError:
-    HAS_PDFPLUMBER = False
+    HAS_RECIPE_SCRAPERS = False
 
 from database import init_db, SessionLocal, Offer, Recipe, PriceHistory
 from scraper import run_scraper
@@ -133,7 +132,7 @@ st.markdown("""
 
 
 # -----------------------------------------------------------------------------
-# MULTI-LANGUAGE DICTIONARIES & PARSER LOGIC
+# 3. MULTI-LANGUAGE DICTIONARIES & NORMALIZATION ENGINE
 # -----------------------------------------------------------------------------
 
 UNIT_MAP = {
@@ -146,10 +145,21 @@ UNIT_MAP = {
     "cup": "Tasse", "cups": "Tasse", "gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg",
     "clove": "Zehe", "cloves": "Zehe", "piece": "Stück", "pieces": "Stück", "pinch": "Prise", "can": "Dose",
     "pound": "Pfund", "pounds": "Pfund", "lb": "Pfund", "lbs": "Pfund", "oz": "g", "ounce": "g", "ounces": "g",
-    "milliliter": "ml", "milliliters": "ml", "slice": "Scheibe", "slices": "Scheiben", "pack": "Packung"
+    "milliliter": "ml", "milliliters": "ml", "slice": "Scheibe", "slices": "Scheiben", "pack": "Packung",
+    "teelöffel": "TL", "esslöffel": "EL", "zehe": "Zehe", "zehen": "Zehe", "stück": "Stück", "dose": "Dose",
+    "dosen": "Dose", "prise": "Prise", "prisen": "Prise", "packung": "Packung", "packungen": "Packung"
 }
 
 INGREDIENT_TRANSLATION_MAP = {
+    # German / Standard
+    "weizenmehl": "Weizenmehl", "mehl": "Weizenmehl", "naturjoghurt": "Naturjoghurt", "joghurt": "Joghurt",
+    "passierte tomaten": "Passierte Tomaten", "gehackte tomaten": "Gehackte Tomaten", "tomatenmark": "Tomatenmark",
+    "mozarella": "Mozzarella", "mozzarella": "Mozzarella", "käse": "Käse", "mettwurst": "Mettwurst",
+    "eier": "Eier", "ei": "Eier", "milch": "Milch", "butter": "Butter", "zucker": "Zucker", "salz": "Salz",
+    "zwiebeln": "Zwiebeln", "zwiebel": "Zwiebeln", "knoblauch": "Knoblauch", "knoblauchzehe": "Knoblauch",
+    "kartoffeln": "Kartoffeln", "kartoffel": "Kartoffeln", "hackfleisch": "Hackfleisch", "rinderhackfleisch": "Hackfleisch",
+    "reis": "Reis", "spaghetti": "Spaghetti", "nudeln": "Spaghetti", "senf": "Senf", "ketchup": "Ketchup",
+    # Portuguese / Spanish
     "farinha de trigo": "Weizenmehl", "farinha": "Weizenmehl", "iogurte natural": "Naturjoghurt",
     "iogurte": "Joghurt", "passata de tomate": "Passierte Tomaten", "molho de tomate": "Passierte Tomaten",
     "tomate pelado": "Gehackte Tomaten", "mussarela": "Mozzarella", "queijo mussarela": "Mozzarella",
@@ -157,27 +167,29 @@ INGREDIENT_TRANSLATION_MAP = {
     "ovos": "Eier", "leite": "Milch", "manteiga": "Butter", "açúcar": "Zucker", "açucar": "Zucker",
     "sal": "Salz", "cebola": "Zwiebeln", "cebolas": "Zwiebeln", "alho": "Knoblauch", "batata": "Kartoffeln",
     "batatas": "Kartoffeln", "carne moída": "Hackfleisch", "carne moida": "Hackfleisch", "arroz": "Reis",
-    "macarrão": "Spaghetti", "espaguete": "Spaghetti", "ketchup": "Ketchup", "mustard": "Senf",
+    "macarrão": "Spaghetti", "espaguete": "Spaghetti",
+    # Danish
     "hvedemel": "Weizenmehl", "sukker": "Zucker", "æg": "Eier", "mælk": "Milch", "smør": "Butter",
     "kartofler": "Kartoffeln", "løg": "Zwiebeln", "hvidløg": "Knoblauch", "hakket oksekød": "Hackfleisch",
     "hakkekød": "Hackfleisch",
+    # English
     "flour": "Weizenmehl", "wheat flour": "Weizenmehl", "eggs": "Eier", "egg": "Eier",
     "ground beef": "Hackfleisch", "minced meat": "Hackfleisch", "minced beef": "Hackfleisch",
     "milk": "Milch", "butter": "Butter", "sugar": "Zucker", "salt": "Salz", "onion": "Zwiebeln",
     "onions": "Zwiebeln", "garlic": "Knoblauch", "potatoes": "Kartoffeln", "potato": "Kartoffeln",
     "spaghetti": "Spaghetti", "pasta": "Spaghetti", "strained tomatoes": "Passierte Tomaten",
     "tomato paste": "Tomatenmark", "natural yogurt": "Naturjoghurt", "plain yogurt": "Naturjoghurt",
-    "mozzarella": "Mozzarella", "rice": "Reis", "yellow mustard": "Senf"
+    "rice": "Reis", "yellow mustard": "Senf"
 }
 
 EXCLUDE_METADATA_KEYWORDS = [
     'prep time', 'servings', 'calories', 'protein', 'carbs', 'fat',
-    'nutrition', 'facts', 'total time', 'cook time', 'yield', 'prep:', 'kcal', 'min'
+    'nutrition', 'facts', 'total time', 'cook time', 'yield', 'prep:', 'kcal', 'min',
+    'zubereitung', 'zuberitung', 'schwierigkeitsgrad', 'arbeitszeit'
 ]
 
 INSTRUCTION_STOP_REGEX = r"^(instructions|preparo|preparação|montagem|cozimento|cooking|directions|method|finishing|serving|vorbereitung|roasting|steps|modo de preparo|fremgangsmåde|zubereitung)"
-
-MEASUREMENT_UNITS_REGEX = r"\b(gram|grams|grama|gramas|g|kg|kilogram|kilograms|quilo|quilos|milliliter|milliliters|ml|l|liter|liters|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|cup|cups|piece|pieces|unidade|unidades|clove|cloves|dente|dentes|pound|pounds|lb|lbs|oz|ounce|ounces|unit|units|slice|slices|can|cans|pinch|pack|packs|lata|latas|pitada|tasse|zehe|dose|el|tl|stk)\b"
+MEASUREMENT_UNITS_REGEX = r"\b(gram|grams|grama|gramas|g|kg|kilogram|kilograms|quilo|quilos|milliliter|milliliters|ml|l|liter|liters|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|cup|cups|piece|pieces|unidade|unidades|clove|cloves|dente|dentes|pound|pounds|lb|lbs|oz|ounce|ounces|unit|units|slice|slices|can|cans|pinch|pack|packs|lata|latas|pitada|tasse|zehe|zehen|dose|dosen|el|tl|stk|stück|prise|prisen|packung|packungen)\b"
 
 
 def normalize_unit(unit_str: str) -> str:
@@ -200,193 +212,100 @@ def clean_item_name_artifacts(name_str: str) -> str:
     return cleaned if cleaned else name_str.strip()
 
 
-def is_valid_title_candidate(line: str) -> bool:
-    """Checks if a line qualifies as a valid recipe title."""
-    cleaned = line.strip()
-    if not cleaned or len(cleaned) > 60:
-        return False
-    # Must not start with numbers, bullets, or step prefixes
-    if re.match(r"^[•\-\*\d\.\)\|\☑\☐\①\②\③]", cleaned):
-        return False
-    cleaned_lower = cleaned.lower()
-    # Must not be a metadata key or instruction header
+def parse_single_ingredient_line(line_text: str) -> dict | None:
+    """Parses a single line into a quantity, unit, and mapped German supermarket item name."""
+    cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line_text).strip()
+    if not cleaned_line:
+        return None
+
+    cleaned_lower = cleaned_line.lower()
     if any(kw in cleaned_lower for kw in EXCLUDE_METADATA_KEYWORDS):
-        return False
-    if re.search(INSTRUCTION_STOP_REGEX, cleaned_lower):
-        return False
-    if re.search(r"ingredients|ingredientes", cleaned_lower):
-        return False
-    return True
+        return None
 
-
-def is_valid_ingredient_line(line: str) -> bool:
-    """Loosened check: accepts numbers, standard measurement units, or bullet points."""
-    cleaned = line.strip()
-    if not cleaned:
-        return False
-    cleaned_lower = cleaned.lower()
+    match = re.match(r"^([\d\.,/]+)?\s*(" + MEASUREMENT_UNITS_REGEX + r")?\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
     
-    # 1. Starts with a digit or fraction (e.g. 200, 1, 0.5, 1/2)
-    if re.match(r"^[\d\.,/]+", cleaned):
-        return True
-    # 2. Contains a measurement unit
-    if re.search(MEASUREMENT_UNITS_REGEX, cleaned_lower):
-        return True
-    # 3. Starts with a clean bullet character followed by text
-    if re.match(r"^[•\-\*\|]\s*[a-zA-Z]", cleaned):
-        return True
-    
-    return False
+    if match:
+        qty_str, unit_str, _, name_str = match.groups()
+        qty_str = qty_str or "1"
+        unit_str = unit_str or "Stück"
+
+        try:
+            qty_clean = qty_str.replace(",", ".")
+            if "/" in qty_clean:
+                num, den = qty_clean.split("/")
+                qty = float(num) / float(den)
+            else:
+                qty = float(qty_clean)
+        except ValueError:
+            qty = 1.0
+
+        unit = normalize_unit(unit_str)
+        cleaned_name = clean_item_name_artifacts(name_str)
+        original_name = cleaned_name.title()
+        german_match_name = translate_to_german_grocery(cleaned_name)
+
+        return {
+            "name": german_match_name,
+            "original_name": original_name,
+            "quantity": qty,
+            "unit": unit
+        }
+    else:
+        cleaned_name = clean_item_name_artifacts(cleaned_line)
+        if len(cleaned_name) > 1:
+            german_match_name = translate_to_german_grocery(cleaned_name)
+            return {
+                "name": german_match_name,
+                "original_name": cleaned_name.title(),
+                "quantity": 1.0,
+                "unit": "Stück"
+            }
+    return None
 
 
-def parse_raw_recipe_ingredients_only(raw_text: str) -> tuple[str, list[dict]]:
-    """
-    Flexible Recipe Parser:
-    - Fuzzy/partial ingredient section matching
-    - Loosened ingredient validation (numbers, units, or bullets)
-    - Strict instruction cutoff
-    """
-    raw_lines = []
-    for line in raw_text.strip().split("\n"):
-        tokens = re.split(r"[•\|\*\t]", line)
-        for tok in tokens:
-            if tok.strip():
-                raw_lines.append(tok.strip())
-
-    if not raw_lines:
+def parse_recipe_one_or_text_paste(raw_text: str) -> tuple[str, list[dict]]:
+    """Parses plain text from Recipe One, TikTok captions, or personal notes."""
+    lines = [line.strip() for line in raw_text.strip().split("\n") if line.strip()]
+    if not lines:
         return "Untitled Recipe", []
 
-    # Identify Recipe Title (first candidate line appearing before ingredients)
-    title = "Untitled Recipe"
-    for line in raw_lines:
-        if is_valid_title_candidate(line):
-            title = line.lstrip("# ").strip()
-            break
-
+    title = lines[0].lstrip("#•-* ").strip()
     ingredients = []
-    is_in_ingredients_section = False
-
-    for line in raw_lines:
+    
+    for line in lines[1:]:
         clean_lower = line.lower().strip()
-
-        # 1. FLEXIBLE INGREDIENT SECTION DETECTION
-        if re.search(r'ingredients|ingredientes', clean_lower):
-            is_in_ingredients_section = True
+        if re.search(INSTRUCTION_STOP_REGEX, clean_lower):
+            break
+        if re.search(r"^(ingredientes|ingredients|zutaten):?", clean_lower):
             continue
-
-        # 2. STRICT INSTRUCTION STOP & JUNKS SKIPPING
-        if is_in_ingredients_section:
-            if re.search(INSTRUCTION_STOP_REGEX, clean_lower) or re.match(r"^(\d+[\.\)]|\d+\s|☑|☐|①|②|③)", clean_lower):
-                is_in_ingredients_section = False
-                break
-
-            if any(kw in clean_lower for kw in EXCLUDE_METADATA_KEYWORDS):
-                continue
-
-            # Strip leading bullets, checkmarks, numbers
-            cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line).strip()
-            if not cleaned_line:
-                continue
-
-            # 3. LOOSENED INGREDIENT VALIDATION
-            if is_valid_ingredient_line(line):
-                match = re.match(r"^([\d\.,/]+)?\s*(" + MEASUREMENT_UNITS_REGEX + r")?\s+(de\s+)?(.+)$", cleaned_line, re.IGNORECASE)
-                
-                if match:
-                    qty_str, unit_str, _, name_str = match.groups()
-                    qty_str = qty_str or "1"
-                    unit_str = unit_str or "Stück"
-
-                    try:
-                        qty_clean = qty_str.replace(",", ".")
-                        if "/" in qty_clean:
-                            num, den = qty_clean.split("/")
-                            qty = float(num) / float(den)
-                        else:
-                            qty = float(qty_clean)
-                    except ValueError:
-                        qty = 1.0
-
-                    unit = normalize_unit(unit_str)
-                    cleaned_name = clean_item_name_artifacts(name_str)
-                    original_name = cleaned_name.title()
-                    german_match_name = translate_to_german_grocery(cleaned_name)
-
-                    ingredients.append({
-                        "name": german_match_name,
-                        "original_name": original_name,
-                        "quantity": qty,
-                        "unit": unit
-                    })
-                else:
-                    # Fallback ingredient line without strict quantity/unit match
-                    cleaned_name = clean_item_name_artifacts(cleaned_line)
-                    if len(cleaned_name) > 1:
-                        german_match_name = translate_to_german_grocery(cleaned_name)
-                        ingredients.append({
-                            "name": german_match_name,
-                            "original_name": cleaned_name.title(),
-                            "quantity": 1.0,
-                            "unit": "Stück"
-                        })
+            
+        ing_dict = parse_single_ingredient_line(line)
+        if ing_dict:
+            ingredients.append(ing_dict)
 
     return title, ingredients
 
 
-def parse_pdf_recipes_ingredients_only(file_stream) -> list[tuple[str, list[dict]]]:
-    """
-    SPATIAL PARSING ENGINE WITH GRACEFUL FALLBACK
-    Attempts pdfplumber spatial two-column extraction first.
-    Falls back to pypdf line reading if pdfplumber fails.
-    """
-    recipe_text_blocks = []
+def parse_chefkoch_url(url: str) -> tuple[str, list[dict]]:
+    """Scrapes Chefkoch or standard recipe URLs via recipe-scrapers."""
+    if not HAS_RECIPE_SCRAPERS:
+        raise ImportError("`recipe-scrapers` package is missing. Install it using `pip install recipe-scrapers`.")
 
-    if HAS_PDFPLUMBER:
-        try:
-            file_stream.seek(0)
-            with pdfplumber.open(file_stream) as pdf:
-                for page in pdf.pages:
-                    w = page.width
-                    h = page.height
-                    
-                    left_bbox = (0, 0, w / 2, h)
-                    right_bbox = (w / 2, 0, w, h)
+    scraper = scrape_me(url)
+    title = scraper.title()
+    raw_ingredients = scraper.ingredients()
+    
+    parsed_ingredients = []
+    for raw_ing in raw_ingredients:
+        ing_dict = parse_single_ingredient_line(raw_ing)
+        if ing_dict:
+            parsed_ingredients.append(ing_dict)
 
-                    left_crop = page.crop(left_bbox)
-                    right_crop = page.crop(right_bbox)
-
-                    left_text = left_crop.extract_text(layout=False) or ""
-                    right_text = right_crop.extract_text(layout=False) or ""
-
-                    page_combined = left_text + "\n" + right_text
-                    if page_combined.strip():
-                        recipe_text_blocks.append(page_combined)
-        except Exception:
-            recipe_text_blocks = []
-
-    # FALLBACK ENGINE: pypdf line-by-line extraction
-    if not recipe_text_blocks:
-        try:
-            file_stream.seek(0)
-            reader = PdfReader(file_stream)
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    recipe_text_blocks.append(text)
-        except Exception:
-            pass
-
-    parsed_batch = []
-    for raw_block in recipe_text_blocks:
-        t, ing = parse_raw_recipe_ingredients_only(raw_block)
-        if ing:
-            parsed_batch.append((t, ing))
-            
-    return parsed_batch
+    return title, parsed_ingredients
 
 
 # -----------------------------------------------------------------------------
-# WEEKLY AGGREGATION & STRATEGY ENGINE
+# 4. WEEKLY AGGREGATION & STRATEGY ENGINE
 # -----------------------------------------------------------------------------
 
 def aggregate_weekly_ingredients(selected_recipes_config):
@@ -682,18 +601,18 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (FLEXIBLE PDF PARSING & BULK ACTIONS)
+# TAB 3: RECIPE MANAGER (CHEFKOCH URL & TEXT IMPORTER)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
     
     crud_subtab1, crud_subtab2 = st.tabs([
         "📋 Saved Recipe Collection",
-        "📥 Add / Batch Import Recipes"
+        "📥 Add / Import Recipes"
     ])
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES LIST WITH DUPLICATE DETECTION & SEARCH
+    # SUB-TAB 1: SAVED RECIPES COLLECTION
     # -------------------------------------------------------------------------
     with crud_subtab1:
         st.subheader("Saved Recipes")
@@ -702,7 +621,7 @@ with tab3:
             recipes_list = db.query(Recipe).all()
 
             if not recipes_list:
-                st.info("No saved recipes found. Add or import recipes using the next tab.")
+                st.info("No saved recipes found. Import recipes using the next tab.")
             else:
                 title_counts = Counter(r.title.strip().lower() for r in recipes_list)
                 duplicate_titles = {t for t, count in title_counts.items() if count >= 2}
@@ -837,7 +756,6 @@ with tab3:
                         if st.button(f"Delete Selected ({len(checked_ids)})", type="primary", key="btn_exec_bulk_delete"):
                             db.query(Recipe).filter(Recipe.id.in_(checked_ids)).delete(synchronize_session=False)
                             db.commit()
-                            
                             st.toast(f"Deleted {len(checked_ids)} recipe(s)!")
                             st.rerun()
 
@@ -845,50 +763,54 @@ with tab3:
             db.close()
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 2: STREAMLINED IMPORT (FLEXIBLE PDF PARSER)
+    # SUB-TAB 2: CHEFKOCH URL & RECIPE ONE TEXT IMPORTER
     # -------------------------------------------------------------------------
     with crud_subtab2:
         st.subheader("Add / Import Recipes")
-        st.caption("Flexible PDF layout parsing with robust ingredient line detection.")
+        st.caption("Import directly from Chefkoch web links or paste Recipe One / plain text notes.")
         db = get_db()
 
         try:
-            import_mode = st.radio("Import Method:", ["Batch Upload PDF Recipes", "Paste Raw Recipe Text"], horizontal=True, key="import_mode_choice")
+            import_mode = st.radio("Import Method:", ["Option A: Chefkoch URL Import", "Option B: Recipe One / Plain Text Paste"], horizontal=True, key="import_mode_choice")
 
-            if import_mode == "Batch Upload PDF Recipes":
-                uploaded_file = st.file_uploader("Upload a recipe collection PDF", type=["pdf"], key="pdf_uploader_clean")
+            if import_mode == "Option A: Chefkoch URL Import":
+                chefkoch_url = st.text_input(
+                    "Paste Chefkoch Recipe Link:",
+                    placeholder="https://www.chefkoch.de/rezepte/12345/Spaghetti-Bolognese.html",
+                    key="input_chefkoch_url"
+                )
 
-                if uploaded_file is not None:
-                    if st.button("Extract & Save Ingredients from PDF", key="btn_pdf_extract"):
-                        parsed_recipes = parse_pdf_recipes_ingredients_only(io.BytesIO(uploaded_file.read()))
-                        
-                        if parsed_recipes:
-                            count = 0
-                            for t, ing in parsed_recipes:
-                                new_recipe = Recipe(title=t, instructions="")
-                                new_recipe.ingredients = ing
+                if st.button("🔗 Scrape & Save Recipe", key="btn_scrape_chefkoch"):
+                    if chefkoch_url.strip():
+                        try:
+                            title, ingredients = parse_chefkoch_url(chefkoch_url.strip())
+                            if ingredients:
+                                new_recipe = Recipe(title=title, instructions="")
+                                new_recipe.ingredients = ingredients
                                 db.add(new_recipe)
-                                count += 1
-                            db.commit()
-                            st.success(f"Successfully imported {count} recipe(s) from PDF!")
-                            st.rerun()
-                        else:
-                            st.error("Could not parse valid ingredients from PDF. Ensure the PDF contains text and recipe ingredient lists.")
+                                db.commit()
+                                st.success(f"Successfully scraped & imported '{title}' ({len(ingredients)} ingredients)!")
+                                st.rerun()
+                            else:
+                                st.warning(f"Scraped '{title}', but no valid ingredients were found.")
+                        except Exception as e:
+                            st.error(f"Could not scrape recipe from URL: {e}")
+                    else:
+                        st.warning("Please paste a valid recipe URL into the box first.")
 
             else:
                 sample_placeholder = (
                     "Bolo de Cenoura\n"
-                    "Ingredients:\n"
                     "200 g Farinha de trigo\n"
                     "3 Stück Eier\n"
                     "200 g Açúcar\n"
                     "100 g Manteiga"
                 )
-                raw_text = st.text_area("Paste text here (Title on line 1, 'Ingredients' header, then ingredient lines):", height=180, placeholder=sample_placeholder, key="raw_text_clean")
+                raw_text = st.text_area("Paste text here (Title on line 1, then ingredient lines):", height=180, placeholder=sample_placeholder, key="raw_text_clean")
 
                 if st.button("Parse & Save Ingredients", key="btn_text_extract"):
                     if raw_text.strip():
-                        t, ing = parse_raw_recipe_ingredients_only(raw_text)
+                        t, ing = parse_recipe_one_or_text_paste(raw_text)
                         if ing:
                             new_recipe = Recipe(title=t, instructions="")
                             new_recipe.ingredients = ing
@@ -897,7 +819,7 @@ with tab3:
                             st.success(f"Saved recipe ingredients: '{t}'!")
                             st.rerun()
                         else:
-                            st.warning("No valid ingredients matched. Include an 'Ingredients' header and quantity/unit lines.")
+                            st.warning("No valid ingredients matched. Enter title on line 1 and quantity/unit per line below.")
                     else:
                         st.warning("Please paste recipe text into the box first.")
 
