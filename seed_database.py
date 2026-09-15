@@ -44,7 +44,6 @@ SEED_RECIPES = [
     }
 ]
 
-
 def seed_recipes():
     init_db()
     db = SessionLocal()
@@ -103,10 +102,8 @@ def seed_recipes():
     finally:
         db.close()
 
-
 def seed_database():
     seed_recipes()
-
 
 if __name__ == "__main__":
     seed_database()
