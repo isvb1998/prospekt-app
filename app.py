@@ -1,5 +1,6 @@
 import re
 import io
+from collections import Counter
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -97,7 +98,7 @@ st.markdown("""
         font-weight: 700 !important;
     }
 
-    /* Primary & Danger Action Buttons */
+    /* Primary & Action Buttons */
     .stButton>button {
         border-radius: 8px !important;
         font-weight: 600 !important;
@@ -563,7 +564,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (STATEFUL CHECKBOX BULK DELETE & SEARCH)
+# TAB 3: RECIPE MANAGER (DUPLICATE DETECTION & STATEFUL BULK ACTIONS)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -574,7 +575,7 @@ with tab3:
     ])
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES LIST WITH SEARCH & MASTER SELECT ALL
+    # SUB-TAB 1: SAVED RECIPES LIST WITH DUPLICATE DETECTION & SEARCH
     # -------------------------------------------------------------------------
     with crud_subtab1:
         st.subheader("Saved Recipes")
@@ -585,10 +586,16 @@ with tab3:
             if not recipes_list:
                 st.info("No saved recipes found. Add or import recipes using the next tab.")
             else:
-                # 1. Real-time Search Bar
+                # 1. DUPLICATE TITLE DETECTION ENGINE
+                title_counts = Counter(r.title.strip().lower() for r in recipes_list)
+                duplicate_titles = {t for t, count in title_counts.items() if count >= 2}
+
+                if duplicate_titles:
+                    st.warning(f"⚠️ {len(duplicate_titles)} duplicate recipe title(s) detected in database. Look for the ⚠️ warning badge below.")
+
+                # 2. Real-time Search Bar
                 search_query = st.text_input("🔍 Search recipes by title or ingredient...", key="recipe_search_input").strip().lower()
 
-                # Filter recipes based on title or ingredients
                 if search_query:
                     filtered_recipes = []
                     for r in recipes_list:
@@ -623,7 +630,6 @@ with tab3:
                         on_change=sync_master_select
                     )
 
-                # Track checked IDs
                 checked_ids = [r.id for r in filtered_recipes if st.session_state.get(f"rec_chk_{r.id}", False)]
 
                 # Sticky Action Bar for Bulk Delete
@@ -635,13 +641,29 @@ with tab3:
                     st.warning(f"No recipes matching '{search_query}'.")
                 else:
                     for r in filtered_recipes:
+                        is_duplicate = r.title.strip().lower() in duplicate_titles
+                        
+                        # Format Title Label with Warning Icon if Duplicate
+                        if is_duplicate:
+                            display_title = f"⚠️ {r.title}"
+                            dup_subtitle = " *(⚠️ Duplicate title detected — check ingredients or rename)*"
+                        else:
+                            display_title = r.title
+                            dup_subtitle = ""
+
                         c_chk, c_title, c_edit = st.columns([0.06, 0.82, 0.12])
 
                         with c_chk:
                             st.checkbox("", key=f"rec_chk_{r.id}")
 
                         with c_title:
-                            with st.expander(f"🍲 **{r.title}** ({len(r.ingredients)} ingredients)"):
+                            with st.expander(
+                                f"🍲 **{display_title}** ({len(r.ingredients)} ingredients){dup_subtitle}",
+                                expanded=False
+                            ):
+                                if is_duplicate:
+                                    st.error("⚠️ **Duplicate Detected:** Another recipe shares this exact title. Edit the title or check for duplicate entries.")
+                                
                                 st.write("**Ingredients List:**")
                                 for ing in r.ingredients:
                                     orig = ing.get('original_name', ing['name'])
@@ -710,7 +732,7 @@ with tab3:
                                 st.session_state[f"rec_chk_{cid}"] = False
                             st.session_state["select_all_master"] = False
                             
-                            st.toast(f"Deleted {len(checked_ids)} recipes!")
+                            st.toast(f"Deleted {len(checked_ids)} recipe(s)!")
                             st.rerun()
 
         finally:
