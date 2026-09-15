@@ -81,7 +81,6 @@ class UserLearnedMapping(Base):
 
 
 def apply_migrations():
-    """Safely adds missing columns/tables to existing SQLite database without data loss."""
     inspector = inspect(engine)
 
     if inspector.has_table("offers"):
