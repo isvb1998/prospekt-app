@@ -14,7 +14,7 @@ except ImportError:
 
 from database import init_db, SessionLocal, Offer, Recipe, PriceHistory
 from scraper import run_scraper
-from engine import find_best_ingredient_price
+from engine import find_best_ingredient_price, map_ingredient_to_german_sku, strip_ingredient_descriptors
 from seed_database import seed_database
 
 # -----------------------------------------------------------------------------
@@ -163,38 +163,6 @@ UNIT_MAP = {
     "dosen": "Dose", "prise": "Prise", "prisen": "Prise", "packung": "Packung", "packungen": "Packung"
 }
 
-INGREDIENT_TRANSLATION_MAP = {
-    # German / Standard
-    "weizenmehl": "Weizenmehl", "mehl": "Weizenmehl", "naturjoghurt": "Naturjoghurt", "joghurt": "Joghurt",
-    "passierte tomaten": "Passierte Tomaten", "gehackte tomaten": "Gehackte Tomaten", "tomatenmark": "Tomatenmark",
-    "mozarella": "Mozzarella", "mozzarella": "Mozzarella", "käse": "Käse", "mettwurst": "Mettwurst",
-    "eier": "Eier", "ei": "Eier", "milch": "Milch", "butter": "Butter", "zucker": "Zucker", "salz": "Salz",
-    "zwiebeln": "Zwiebeln", "zwiebel": "Zwiebeln", "knoblauch": "Knoblauch", "knoblauchzehe": "Knoblauch",
-    "kartoffeln": "Kartoffeln", "kartoffel": "Kartoffeln", "hackfleisch": "Hackfleisch", "rinderhackfleisch": "Hackfleisch",
-    "reis": "Reis", "spaghetti": "Spaghetti", "nudeln": "Spaghetti", "senf": "Senf", "ketchup": "Ketchup",
-    # Portuguese / Spanish
-    "farinha de trigo": "Weizenmehl", "farinha": "Weizenmehl", "iogurte natural": "Naturjoghurt",
-    "iogurte": "Joghurt", "passata de tomate": "Passierte Tomaten", "molho de tomate": "Passierte Tomaten",
-    "tomate pelado": "Gehackte Tomaten", "mussarela": "Mozzarella", "queijo mussarela": "Mozzarella",
-    "queijo": "Käse", "linguiça calabresa": "Mettwurst", "calabresa": "Mettwurst", "ovo": "Eier",
-    "ovos": "Eier", "leite": "Milch", "manteiga": "Butter", "açúcar": "Zucker", "açucar": "Zucker",
-    "sal": "Salz", "cebola": "Zwiebeln", "cebolas": "Zwiebeln", "alho": "Knoblauch", "batata": "Kartoffeln",
-    "batatas": "Kartoffeln", "carne moída": "Hackfleisch", "carne moida": "Hackfleisch", "arroz": "Reis",
-    "macarrão": "Spaghetti", "espaguete": "Spaghetti",
-    # Danish
-    "hvedemel": "Weizenmehl", "sukker": "Zucker", "æg": "Eier", "mælk": "Milch", "smør": "Butter",
-    "kartofler": "Kartoffeln", "løg": "Zwiebeln", "hvidløg": "Knoblauch", "hakket oksekød": "Hackfleisch",
-    "hakkekød": "Hackfleisch",
-    # English
-    "flour": "Weizenmehl", "wheat flour": "Weizenmehl", "eggs": "Eier", "egg": "Eier",
-    "ground beef": "Hackfleisch", "minced meat": "Hackfleisch", "minced beef": "Hackfleisch",
-    "milk": "Milch", "butter": "Butter", "sugar": "Zucker", "salt": "Salz", "onion": "Zwiebeln",
-    "onions": "Zwiebeln", "garlic": "Knoblauch", "potatoes": "Kartoffeln", "potato": "Kartoffeln",
-    "spaghetti": "Spaghetti", "pasta": "Spaghetti", "strained tomatoes": "Passierte Tomaten",
-    "tomato paste": "Tomatenmark", "natural yogurt": "Naturjoghurt", "plain yogurt": "Naturjoghurt",
-    "rice": "Reis", "yellow mustard": "Senf"
-}
-
 EXCLUDE_METADATA_KEYWORDS = [
     'prep time', 'servings', 'calories', 'protein', 'carbs', 'fat',
     'nutrition', 'facts', 'total time', 'cook time', 'yield', 'prep:', 'kcal', 'min',
@@ -210,23 +178,13 @@ def normalize_unit(unit_str: str) -> str:
     return UNIT_MAP.get(cleaned, unit_str.strip())
 
 
-def translate_to_german_grocery(ingredient_raw: str) -> str:
-    cleaned = ingredient_raw.strip().lower()
-    if cleaned in INGREDIENT_TRANSLATION_MAP:
-        return INGREDIENT_TRANSLATION_MAP[cleaned]
-    for key, german_term in INGREDIENT_TRANSLATION_MAP.items():
-        if key in cleaned:
-            return german_term
-    return ingredient_raw.strip().title()
-
-
 def clean_item_name_artifacts(name_str: str) -> str:
     cleaned = re.sub(r"^(gram|grams|grama|gramas|g|ml|kg|tbsp|tsp|cup|cups|piece|pieces|clove|cloves|pound|pounds|lb|lbs|oz|ounce|ounces|slice|slices|can|cans|pack|packs)\s*", "", name_str, flags=re.IGNORECASE).strip()
     return cleaned if cleaned else name_str.strip()
 
 
 def parse_single_ingredient_line(line_text: str) -> dict | None:
-    """Parses a single line into a quantity, unit, and mapped German supermarket item name."""
+    """Parses a single line into quantity, unit, original name, and mapped German SKU."""
     cleaned_line = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", line_text).strip()
     if not cleaned_line:
         return None
@@ -253,9 +211,9 @@ def parse_single_ingredient_line(line_text: str) -> dict | None:
             qty = 1.0
 
         unit = normalize_unit(unit_str)
-        cleaned_name = clean_item_name_artifacts(name_str)
-        original_name = cleaned_name.title()
-        german_match_name = translate_to_german_grocery(cleaned_name)
+        raw_clean_name = strip_ingredient_descriptors(clean_item_name_artifacts(name_str))
+        original_name = raw_clean_name.title()
+        german_match_name = map_ingredient_to_german_sku(raw_clean_name)
 
         return {
             "name": german_match_name,
@@ -264,12 +222,12 @@ def parse_single_ingredient_line(line_text: str) -> dict | None:
             "unit": unit
         }
     else:
-        cleaned_name = clean_item_name_artifacts(cleaned_line)
-        if len(cleaned_name) > 1:
-            german_match_name = translate_to_german_grocery(cleaned_name)
+        raw_clean_name = strip_ingredient_descriptors(clean_item_name_artifacts(cleaned_line))
+        if len(raw_clean_name) > 1:
+            german_match_name = map_ingredient_to_german_sku(raw_clean_name)
             return {
                 "name": german_match_name,
-                "original_name": cleaned_name.title(),
+                "original_name": raw_clean_name.title(),
                 "quantity": 1.0,
                 "unit": "Stück"
             }
@@ -625,7 +583,7 @@ with tab2:
 
 
 # -----------------------------------------------------------------------------
-# TAB 3: RECIPE MANAGER (CHEFKOCH URL & TEXT IMPORTER & MANUAL RE-SEED)
+# TAB 3: RECIPE MANAGER (EDITABLE INGREDIENTS MAPPING & MANUAL OVERRIDE UI)
 # -----------------------------------------------------------------------------
 with tab3:
     st.header("Recipe Manager")
@@ -636,7 +594,7 @@ with tab3:
     ])
 
     # -------------------------------------------------------------------------
-    # SUB-TAB 1: SAVED RECIPES COLLECTION
+    # SUB-TAB 1: SAVED RECIPES COLLECTION WITH FULL MANUAL OVERRIDE UI
     # -------------------------------------------------------------------------
     with crud_subtab1:
         st.subheader("Saved Recipes")
@@ -719,26 +677,29 @@ with tab3:
                                 if is_duplicate:
                                     st.error("⚠️ **Duplicate Detected:** Another recipe shares this exact title. Edit the title or check for duplicate entries.")
                                 
-                                st.write("**Ingredients List:**")
+                                st.write("**Ingredients List & Mapped German SKUs:**")
                                 for ing in r.ingredients:
                                     orig = ing.get('original_name', ing['name'])
-                                    st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: {ing['name']})*")
+                                    st.write(f"- {ing['quantity']} {ing['unit']} **{orig}** *(Mapped to: `{ing['name']}`)*")
 
                         with c_edit:
                             with st.popover("[ Edit ]"):
-                                st.write(f"**Edit Recipe: {r.title}**")
+                                st.write(f"**Edit Recipe & Mappings: {r.title}**")
                                 with st.form(key=f"inline_edit_form_{r.id}"):
                                     new_title = st.text_input("Recipe Title", value=r.title)
                                     
+                                    # Structured formatting: Original Name, Quantity, Unit, Mapped German SKU
                                     ing_lines = []
                                     for ing in r.ingredients:
                                         orig = ing.get('original_name', ing['name'])
-                                        ing_lines.append(f"{orig}, {ing['quantity']}, {ing['unit']}")
+                                        mapped_sku = ing.get('name', orig)
+                                        ing_lines.append(f"{orig}, {ing['quantity']}, {ing['unit']}, {mapped_sku}")
                                     
                                     new_ing_raw = st.text_area(
-                                        "Ingredients (Name, Quantity, Unit — 1 per line)",
+                                        "Ingredients List (Original Name, Quantity, Unit, Mapped German Supermarket Category — 1 per line)",
                                         value="\n".join(ing_lines),
-                                        height=140
+                                        height=180,
+                                        help="Format: Original Item, Quantity, Unit, Mapped German Category (e.g. Lean Ground Beef, 500, g, Rinderhackfleisch)"
                                     )
 
                                     if st.form_submit_button("Save Changes"):
@@ -756,18 +717,25 @@ with tab3:
                                                         except ValueError:
                                                             qty = 1.0
                                                         
-                                                        raw_name = clean_item_name_artifacts(parts[0])
-                                                        mapped_name = translate_to_german_grocery(raw_name)
+                                                        raw_name = parts[0]
+                                                        unit_val = normalize_unit(parts[2])
+                                                        
+                                                        # Explicit manual override if user provided 4th parameter
+                                                        if len(parts) >= 4 and parts[3].strip():
+                                                            mapped_name = parts[3].strip().title()
+                                                        else:
+                                                            mapped_name = map_ingredient_to_german_sku(raw_name)
+
                                                         updated_ingredients.append({
                                                             "name": mapped_name,
                                                             "original_name": raw_name.title(),
                                                             "quantity": qty,
-                                                            "unit": normalize_unit(parts[2])
+                                                            "unit": unit_val
                                                         })
                                             
                                             db_rec.ingredients = updated_ingredients
                                             db.commit()
-                                            st.toast(f"Updated '{new_title}'!")
+                                            st.toast(f"Updated '{new_title}' with custom ingredient mappings!")
                                             st.rerun()
 
                 if checked_ids:
