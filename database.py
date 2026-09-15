@@ -27,6 +27,17 @@ class Offer(Base):
     valid_to = Column(String, nullable=True)
 
 
+class StandardBaselinePrice(Base):
+    __tablename__ = "standard_baseline_prices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    supermarket_name = Column(String, index=True)
+    product_name = Column(String, index=True)
+    category = Column(String, nullable=True)
+    price = Column(Float, nullable=False)
+    recorded_date = Column(String, nullable=True)
+
+
 class Recipe(Base):
     __tablename__ = "recipes"
 
@@ -74,34 +85,8 @@ class UserLearnedMapping(Base):
 
 def apply_migrations():
     inspector = inspect(engine)
-
-    if inspector.has_table("offers"):
-        offer_cols = [col["name"] for col in inspector.get_columns("offers")]
-        with engine.begin() as conn:
-            if "offer_price" not in offer_cols and "current_price" in offer_cols:
-                conn.execute(text("ALTER TABLE offers RENAME COLUMN current_price TO offer_price;"))
-            elif "offer_price" not in offer_cols:
-                conn.execute(text("ALTER TABLE offers ADD COLUMN offer_price FLOAT DEFAULT 0.0;"))
-            if "valid_from" not in offer_cols:
-                conn.execute(text("ALTER TABLE offers ADD COLUMN valid_from TEXT;"))
-            if "valid_to" not in offer_cols:
-                conn.execute(text("ALTER TABLE offers ADD COLUMN valid_to TEXT;"))
-
-    if inspector.has_table("ingredients"):
-        columns = [col["name"] for col in inspector.get_columns("ingredients")]
-        with engine.begin() as conn:
-            if "generic_category" not in columns:
-                conn.execute(text("ALTER TABLE ingredients ADD COLUMN generic_category TEXT;"))
-            if "mapped_german_item" not in columns:
-                conn.execute(text("ALTER TABLE ingredients ADD COLUMN mapped_german_item TEXT;"))
-
-    if inspector.has_table("recipes"):
-        recipe_cols = [col["name"] for col in inspector.get_columns("recipes")]
-        with engine.begin() as conn:
-            if "category" not in recipe_cols:
-                conn.execute(text("ALTER TABLE recipes ADD COLUMN category TEXT DEFAULT 'Main Course';"))
-            if "servings" not in recipe_cols:
-                conn.execute(text("ALTER TABLE recipes ADD COLUMN servings INTEGER DEFAULT 1;"))
+    if not inspector.has_table("standard_baseline_prices"):
+        Base.metadata.create_all(bind=engine)
 
 
 def init_db():
