@@ -13,9 +13,17 @@ except ImportError:
 
 from database import init_db, SessionLocal, Offer, Recipe, Ingredient, PriceHistory, UserLearnedMapping
 from scraper import run_scraper
-from engine import find_best_ingredient_price, map_ingredient_to_german_sku, strip_ingredient_descriptors if 'strip_ingredient_descriptors' in dir() else lambda x: x, save_user_learned_mapping
+from engine import (
+    find_best_ingredient_price,
+    map_ingredient_to_german_sku,
+    strip_ingredient_descriptors,
+    save_user_learned_mapping
+)
 from seed_database import seed_database, seed_recipes
 
+# -----------------------------------------------------------------------------
+# 1. PAGE CONFIG & DATABASE SETUP
+# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Pro-Meal | Smart Circular Deals & Weekly Meal Optimization",
     page_icon="🥗",
@@ -65,6 +73,10 @@ def check_and_seed_on_startup():
 
 check_and_seed_on_startup()
 
+
+# -----------------------------------------------------------------------------
+# 2. CUSTOM CSS STYLING
+# -----------------------------------------------------------------------------
 st.markdown("""
 <style>
     .main {
@@ -130,6 +142,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# -----------------------------------------------------------------------------
+# 3. PARSING ENGINE WITH LEARNING HOOKS
+# -----------------------------------------------------------------------------
 UNIT_MAP = {
     "colher de chá": "TL", "colheres de chá": "TL", "colher de sopa": "EL", "colheres de sopa": "EL",
     "xícara": "Tasse", "xícaras": "Tasse", "grama": "g", "gramas": "g", "quilo": "kg", "quilos": "kg",
@@ -166,7 +182,7 @@ def parse_single_ingredient_line(line_text: str, db) -> dict | None:
             qty = 1.0
 
         unit = normalize_unit(unit_str)
-        raw_clean_name = name_str.strip().lower()
+        raw_clean_name = strip_ingredient_descriptors(name_str)
         original_name = raw_clean_name.title()
         
         german_match_name = map_ingredient_to_german_sku(raw_clean_name, db)
@@ -196,11 +212,11 @@ def parse_recipe_one_or_text_paste(raw_text: str, db) -> tuple[str, list[dict]]:
 
     return title, ingredients
 
+
+# -----------------------------------------------------------------------------
+# 4. WEEKLY AGGREGATION & HIERARCHICAL PRICING STRATEGY
+# -----------------------------------------------------------------------------
 def aggregate_weekly_ingredients(selected_recipes_config):
-    """
-    ROOT CAUSE FIX: Single Weekly Plan Scope.
-    Strictly aggregates ingredients for the active weekly selection only.
-    """
     aggregated = {}
 
     for item in selected_recipes_config:
@@ -315,6 +331,10 @@ def calculate_cheapest_recipes(recipes, db, limit=5):
     evaluated_recipes.sort(key=lambda x: (x["cheapest_cost"], -x["sale_count"]))
     return evaluated_recipes[:limit]
 
+
+# -----------------------------------------------------------------------------
+# BRAND HEADER BANNER
+# -----------------------------------------------------------------------------
 st.markdown("""
 <div class="brand-header">
     <h1 class="brand-title">🥗 Pro-Meal</h1>
@@ -322,6 +342,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+
+# -----------------------------------------------------------------------------
+# APPLICATION TABS
+# -----------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏷️ Top Deals This Week",
     "📅 Weekly Meal Planner",
@@ -329,6 +353,8 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Price History"
 ])
 
+
+# TAB 1: TOP DEALS THIS WEEK
 with tab1:
     st.header("Weekly Store Circular Deals")
     db = get_db()
@@ -352,6 +378,8 @@ with tab1:
     finally:
         db.close()
 
+
+# TAB 2: WEEKLY MEAL PLANNER
 with tab2:
     st.header("Weekly Meal Planner & Basket Optimization")
     db = get_db()
@@ -427,6 +455,8 @@ with tab2:
     finally:
         db.close()
 
+
+# TAB 3: RECIPE MANAGER
 with tab3:
     st.header("Recipe Manager")
     db = get_db()
@@ -439,6 +469,8 @@ with tab3:
     finally:
         db.close()
 
+
+# TAB 4: PRICE HISTORY
 with tab4:
     st.header("Historical Price Trends")
     db = get_db()
