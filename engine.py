@@ -1,112 +1,154 @@
-from rapidfuzz import fuzz, process
-from sqlalchemy.orm import Session
-from database import Offer, Supermarket, Recipe
+import re
+from rapidfuzz import fuzz
+from database import Offer
+
+# -----------------------------------------------------------------------------
+# 1. MULTI-LANGUAGE EXPLICIT SYNONYM NORMALIZER DICTIONARY (PASS 1)
+# -----------------------------------------------------------------------------
+EXPLICIT_SYNONYM_MAP = {
+    # English
+    "garlic salt": "Knoblauchsalz",
+    "self rising flour": "Weizenmehl",
+    "self-rising flour": "Weizenmehl",
+    "greek yogurt": "Naturjoghurt",
+    "greek yogurt (0% fat)": "Naturjoghurt",
+    "lean ground beef": "Rinderhackfleisch",
+    "lean ground beef (96/4)": "Rinderhackfleisch",
+    "ground beef": "Rinderhackfleisch",
+    "ground pork": "Schweinehackfleisch",
+    "minced beef": "Rinderhackfleisch",
+    "minced meat": "Hackfleisch",
+    "light mayo": "Mayonnaise",
+    "smoked paprika": "Paprikapulver edelsüß",
+    "all-purpose flour": "Weizenmehl",
+    "all purpose flour": "Weizenmehl",
+    "wheat flour": "Weizenmehl",
+    "strained tomatoes": "Passierte Tomaten",
+    "whole peeled tomatoes": "Gehackte Tomaten",
+    "diced tomatoes": "Gehackte Tomaten",
+    "chicken breast": "Hähnchenbrustfilet",
+    "chicken thighs": "Hähnchenbrustfilet",
+    "diced chicken breast": "Hähnchenbrustfilet",
+    "single cream": "Schlagsahne",
+    "double cream": "Schlagsahne",
+    "heavy cream": "Schlagsahne",
+    "evaporated milk": "Milch",
+    "cream cheese": "Frischkäse",
+    "light cream cheese": "Frischkäse",
+    "parmesan cheese": "Parmesan",
+    "freshly grated parmesan cheese": "Parmesan",
+    "puff pastry sheets": "Blätterteig",
+
+    # Portuguese / Spanish
+    "pastinha de alho": "Knoblauch",
+    "linguiça calabresa": "Mettwurst",
+    "calabresa": "Mettwurst",
+    "passata de tomate": "Passierte Tomaten",
+    "molho de tomate": "Passierte Tomaten",
+    "tomate pelado": "Gehackte Tomaten",
+    "mussarela": "Mozzarella",
+    "queijo mussarela": "Mozzarella",
+    "mussarela de búfala": "Mozzarella",
+    "patinho moído": "Rinderhackfleisch",
+    "carne moída": "Hackfleisch",
+    "carne moida": "Hackfleisch",
+    "farinha de trigo": "Weizenmehl",
+    "farinha de trigo branca": "Weizenmehl",
+    "iogurte natural": "Naturjoghurt",
+    "iogurte desnatado": "Naturjoghurt",
+    "extrato de tomate": "Tomatenmark",
+    "peito de frango": "Hähnchenbrustfilet",
+    "frango desfiado": "Hähnchenbrustfilet",
+    "massa folhada": "Blätterteig",
+    "repolho verde": "Kohl",
+    "repolho roxo": "Kohl",
+    "batata inglesa": "Kartoffeln",
+
+    # Danish
+    "hakket oksekød": "Rinderhackfleisch",
+    "hakkekød": "Hackfleisch",
+    "piskefløde": "Schlagsahne",
+    "hvedemel": "Weizenmehl"
+}
 
 
-def find_best_ingredient_price(ingredient_name: str, supermarket_name: str, db: Session):
+# -----------------------------------------------------------------------------
+# 2. HELPER: CLEAN DESCRIPTORS & PARENTHETICAL ARTIFACTS
+# -----------------------------------------------------------------------------
+def strip_ingredient_descriptors(raw_name: str) -> str:
+    """Strips parenthetical notes, numbers, and common modifier words."""
+    # Remove contents inside parentheses e.g. "Lean Ground Beef (96/4)" -> "Lean Ground Beef"
+    cleaned = re.sub(r"\(.*?\)", "", raw_name)
+    # Remove leading/trailing non-alphanumeric artifacts
+    cleaned = re.sub(r"^[•\|\*\-\d\.\)\☑\☐]+", "", cleaned).strip()
+    return cleaned if cleaned else raw_name.strip()
+
+
+# -----------------------------------------------------------------------------
+# 3. TWO-PASS INGREDIENT MATCHING ENGINE
+# -----------------------------------------------------------------------------
+def map_ingredient_to_german_sku(raw_name: str) -> str:
     """
-    Finds the price of an ingredient at a specific store.
-    1. Looks for an active promotional offer (Sale Price).
-    2. If not on sale, falls back to standard baseline price (Original Price).
+    Pass 1: Direct lookup in explicit multi-language synonym dictionary.
+    Pass 2: Fall back to cleaned original title if no explicit key matches.
     """
-    offers = db.query(Offer).filter(Offer.supermarket_name == supermarket_name).all()
+    cleaned = strip_ingredient_descriptors(raw_name).lower()
+
+    # Pass 1: Direct Exact / Substring Lookup in Explicit Map
+    if cleaned in EXPLICIT_SYNONYM_MAP:
+        return EXPLICIT_SYNONYM_MAP[cleaned]
+
+    for key, german_term in EXPLICIT_SYNONYM_MAP.items():
+        if key in cleaned:
+            return german_term
+
+    # Pass 2: Fallback to cleaned Title Case
+    return cleaned.title()
+
+
+def find_best_ingredient_price(ingredient_name: str, supermarket: str, db, min_threshold: float = 75.0) -> dict:
+    """
+    Token-Weighted Fuzzy Match against active flyer database offers.
+    Uses token_set_ratio to prevent short words (e.g., 'Salz') from falsely matching 'Garlic Salt'.
+    Falls back to regular estimated prices if match score < min_threshold (75.0).
+    """
+    normalized_search = map_ingredient_to_german_sku(ingredient_name)
     
-    if offers:
-        # Try matching by generic category or product name using fuzzy matching
-        choices = {o.id: f"{o.generic_category} {o.product_name}" for o in offers}
-        match = process.extractOne(ingredient_name, choices, scorer=fuzz.token_set_ratio)
+    offers = db.query(Offer).filter(Offer.supermarket_name == supermarket).all()
+
+    best_offer = None
+    best_score = 0.0
+
+    for offer in offers:
+        # Calculate Token-Set Ratio to prioritize matching key sub-tokens correctly
+        score = fuzz.token_set_ratio(normalized_search.lower(), offer.product_name.lower())
         
-        if match and match[1] >= 50:
-            matched_offer = next(o for o in offers if o.id == match[2])
-            return {
-                "product_name": matched_offer.product_name,
-                "price": matched_offer.current_price,
-                "original_price": matched_offer.original_price,
-                "is_on_sale": True
-            }
+        if score > best_score:
+            best_score = score
+            best_offer = offer
 
-    # Standard fallback prices for common items when not on offer in a store
-    STANDARD_BASELINES = {
-        "butter": 2.39,
-        "milch": 1.15,
-        "hackfleisch": 4.99,
-        "spaghetti": 1.49,
-        "passierte tomaten": 0.89,
-        "zwiebeln": 1.29,
-        "kartoffeln": 2.99,
-        "quark": 1.39,
-        "milchreis": 0.99,
-        "knoblauch": 0.49
+    # Require minimum match threshold of 75
+    if best_offer and best_score >= min_threshold:
+        return {
+            "price": best_offer.current_price,
+            "product_name": best_offer.product_name,
+            "is_on_sale": True,
+            "match_score": best_score
+        }
+
+    # Fallback estimated default pricing if below threshold
+    DEFAULT_ESTIMATES = {
+        "Weizenmehl": 0.79, "Milch": 1.05, "Eier": 1.99, "Butter": 1.69,
+        "Zucker": 1.49, "Salz": 0.49, "Knoblauch": 0.89, "Zwiebeln": 1.19,
+        "Kartoffeln": 1.99, "Hackfleisch": 3.99, "Rinderhackfleisch": 4.49,
+        "Passierte Tomaten": 0.85, "Gehackte Tomaten": 0.85, "Mozzarella": 0.99,
+        "Naturjoghurt": 0.89, "Hähnchenbrustfilet": 4.99, "Reis": 1.49, "Spaghetti": 0.99
     }
     
-    # Match generic baseline price fallback
-    matched_base = process.extractOne(ingredient_name.lower(), list(STANDARD_BASELINES.keys()), scorer=fuzz.token_set_ratio)
-    fallback_price = STANDARD_BASELINES[matched_base[0]] if matched_base and matched_base[1] >= 60 else 1.99
-
+    fallback_price = DEFAULT_ESTIMATES.get(normalized_search, 1.99)
     return {
-        "product_name": f"{ingredient_name} (Standard Price)",
         "price": fallback_price,
-        "original_price": fallback_price,
-        "is_on_sale": False
-    }
-
-
-def compare_recipe_store_costs(recipe: Recipe, db: Session) -> dict:
-    """Calculates total basket costs per single store and multi-store optimized total."""
-    stores = [s.name for s in db.query(Supermarket).all()]
-    ingredients = recipe.ingredients
-    
-    store_totals = {store: 0.0 for store in stores}
-    store_breakdown = {store: [] for store in stores}
-    
-    item_best_prices = []  # For multi-store optimization
-
-    for ing in ingredients:
-        ing_name = ing["name"]
-        cheapest_item_price = float('inf')
-        cheapest_item_store = ""
-        cheapest_item_name = ""
-
-        for store in stores:
-            price_info = find_best_ingredient_price(ing_name, store, db)
-            cost = price_info["price"]
-            store_totals[store] += cost
-            
-            store_breakdown[store].append({
-                "ingredient": ing_name,
-                "matched_product": price_info["product_name"],
-                "price": cost,
-                "is_on_sale": price_info["is_on_sale"]
-            })
-
-            if cost < cheapest_item_price:
-                cheapest_item_price = cost
-                cheapest_item_store = store
-                cheapest_item_name = price_info["product_name"]
-
-        item_best_prices.append({
-            "ingredient": ing_name,
-            "best_store": cheapest_item_store,
-            "product": cheapest_item_name,
-            "price": cheapest_item_price
-        })
-
-    # Sort single stores by total basket cost
-    sorted_stores = sorted(store_totals.items(), key=lambda x: x[1])
-    cheapest_single_store = sorted_stores[0][0] if sorted_stores else "N/A"
-    cheapest_single_total = round(sorted_stores[0][1], 2) if sorted_stores else 0.0
-
-    multi_store_total = round(sum(item["price"] for item in item_best_prices), 2)
-
-    return {
-        "recipe_id": recipe.id,
-        "recipe_title": recipe.title,
-        "instructions": recipe.instructions,
-        "ingredients": ingredients,
-        "cheapest_single_store": cheapest_single_store,
-        "cheapest_single_total": cheapest_single_total,
-        "multi_store_total": multi_store_total,
-        "store_totals": {k: round(v, 2) for k, v in store_totals.items()},
-        "store_breakdown": store_breakdown,
-        "multi_store_breakdown": item_best_prices
+        "product_name": f"{normalized_search} (Reg. Price)",
+        "is_on_sale": False,
+        "match_score": 0.0
     }
