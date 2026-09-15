@@ -3,3 +3,4 @@ pandas>=2.0.0
 sqlalchemy>=2.0.0
 rapidfuzz>=3.0.0
 plotly>=5.18.0
+pypdf>=3.17.0
