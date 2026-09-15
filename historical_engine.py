@@ -3,8 +3,6 @@ import statistics
 from sqlalchemy.orm import Session
 from database import PriceHistory, Offer
 
-# Category-specific default baseline fallbacks (Tier 3 absolute last resort)
-# Ensures different stores/categories do not all resolve to identical fallback prices.
 CATEGORY_DEFAULTS = {
     "Molkerei": 1.29,
     "Fleisch": 4.49,
@@ -15,7 +13,6 @@ CATEGORY_DEFAULTS = {
 }
 
 def get_category_default(category: str) -> float:
-    """Returns a realistic baseline price based on the grocery category."""
     if not category:
         return 1.49
     return CATEGORY_DEFAULTS.get(category.strip().title(), 1.49)
@@ -32,9 +29,7 @@ def resolve_ingredient_price(german_sku: str, store_name: str, category: str, db
     store_lower = store_name.strip().lower()
     today_str = date.today().isoformat()
 
-    # -------------------------------------------------------------------------
-    # TIER 1: Active Prospekt Price (Today)
-    # -------------------------------------------------------------------------
+    # Tier 1: Active Prospekt Price (Today)
     active_offer = db.query(Offer).filter(
         Offer.supermarket_name.collate("NOCASE") == store_lower,
         Offer.product_name.collate("NOCASE").contains(sku_lower),
@@ -43,7 +38,6 @@ def resolve_ingredient_price(german_sku: str, store_name: str, category: str, db
     ).first()
 
     if active_offer:
-        # Record to price_history if not already present for today
         log_price_history_entry(
             product_name=active_offer.product_name,
             supermarket_name=active_offer.supermarket_name,
@@ -58,9 +52,7 @@ def resolve_ingredient_price(german_sku: str, store_name: str, category: str, db
             "pricing_tier": "Tier 1: Active Prospekt"
         }
 
-    # -------------------------------------------------------------------------
-    # TIER 2: Most Recent Historical Price (Per Store)
-    # -------------------------------------------------------------------------
+    # Tier 2: Most Recent Historical Price (Per Store)
     recent_store_record = db.query(PriceHistory).filter(
         PriceHistory.supermarket_name.collate("NOCASE") == store_lower,
         PriceHistory.product_name.collate("NOCASE").contains(sku_lower)
@@ -74,10 +66,7 @@ def resolve_ingredient_price(german_sku: str, store_name: str, category: str, db
             "pricing_tier": "Tier 2: Recent Store History"
         }
 
-    # -------------------------------------------------------------------------
-    # TIER 3: Cross-Store Historical Average / Category Baseline
-    # -------------------------------------------------------------------------
-    # Check if any other store has history for this item
+    # Tier 3: Cross-Store Historical Average / Category Baseline
     cross_store_records = db.query(PriceHistory).filter(
         PriceHistory.product_name.collate("NOCASE").contains(sku_lower)
     ).all()
@@ -93,7 +82,6 @@ def resolve_ingredient_price(german_sku: str, store_name: str, category: str, db
                 "pricing_tier": "Tier 3: Cross-Store Average"
             }
 
-    # Absolute Last Resort: Category-based default baseline
     category_baseline = get_category_default(category)
     return {
         "product_name": german_sku,
@@ -104,7 +92,6 @@ def resolve_ingredient_price(german_sku: str, store_name: str, category: str, db
 
 
 def log_price_history_entry(product_name: str, supermarket_name: str, price: float, recorded_date: str, db: Session):
-    """Safely logs a new price data point into the price_history archive table."""
     try:
         existing = db.query(PriceHistory).filter(
             PriceHistory.product_name.collate("NOCASE") == product_name.strip(),
